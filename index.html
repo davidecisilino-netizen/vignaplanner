@@ -15,6 +15,8 @@
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<!-- Leaflet-Rotate: aggiunge a Leaflet la possibilità di ruotare liberamente la mappa (orientamento a piacimento, non solo nord in alto) -->
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
 
 <style>
 :root{
@@ -90,6 +92,16 @@ body{
 }
 .fab.active{background:var(--blue); border-color:var(--blue); color:#fff;}
 .fab:active{transform:scale(.94);}
+#btnCompass{position:relative;}
+#btnCompass .compass-needle{display:inline-block; font-size:19px; transition:transform .12s linear; transform-origin:50% 50%;}
+#btnCompass.rotated{background:var(--panel2); border-color:var(--accent);}
+#btnCompass .compass-needle .n{color:#e05353;}
+#btnCompass .compass-needle .s{color:#cfd8dc;}
+#btnCompass .deg-badge{
+  position:absolute; bottom:-6px; left:50%; transform:translateX(-50%); background:var(--accent); color:#1a1a0e;
+  font-size:9px; font-weight:700; padding:1px 5px; border-radius:8px; white-space:nowrap; display:none;
+}
+#btnCompass.rotated .deg-badge{display:block;}
 
 /* Bottom sheet: list of vigneti / varieties, legend */
 #sheet{
@@ -124,10 +136,15 @@ body{
 .vig-item .vi-vars{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px;}
 .vtag{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; gap:4px;}
 
-.var-item{display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--line); font-size:13.5px;}
-.var-item .vc{width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid rgba(255,255,255,.35);}
-.var-item .vn{flex:1;}
-.var-item .vcount{color:var(--text2); font-size:12px;}
+.var-item{display:flex; align-items:flex-start; gap:10px; padding:9px 4px; border-bottom:1px solid var(--line); font-size:13.5px; flex-wrap:wrap;}
+.var-item .vc{width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid rgba(255,255,255,.35); margin-top:2px;}
+.var-item .vi-main{flex:1; min-width:0;}
+.var-item .vn-row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+.var-item .vn{font-weight:600;}
+.var-item .vcount{color:var(--text2); font-size:12px; white-space:nowrap;}
+.var-filari{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
+.ftag{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); color:var(--text2); white-space:nowrap;}
+.ftag b{color:var(--text); font-weight:700;}
 
 #stack-info{font-size:12.5px; color:var(--text2); line-height:1.6;}
 #stack-info b{color:var(--text);}
@@ -160,8 +177,12 @@ input[type=file]{display:none;}
   <div id="gpsStatus"></div>
 
   <div id="fabs">
+    <div class="fab" id="btnCompass" title="Ruota la mappa con due dita — tocca per riportarla a nord">
+      <span class="compass-needle" id="compassNeedle"><span class="n">▲</span><span class="s">▽</span></span>
+      <span class="deg-badge" id="compassDeg">0°</span>
+    </div>
     <div class="fab" id="btnLocate" title="Vai alla mia posizione">◎</div>
-    <div class="fab" id="btnLayers" title="Cambia mappa">🗺</div>
+    <div class="fab" id="btnLayers" title="Cambia mappa" style="font-size:11px;font-weight:700;letter-spacing:.3px">SAT</div>
   </div>
 
   <div id="sheetScrim"></div>
@@ -170,7 +191,7 @@ input[type=file]{display:none;}
     <div id="sheetHead"><h3 id="sheetTitle">Vigneti</h3><button class="icon-btn" id="btnCloseSheet" style="width:32px;height:32px;font-size:15px">✕</button></div>
     <div id="sheetTabs">
       <div class="tabbtn active" data-tab="vigneti">▣ Vigneti</div>
-      <div class="tabbtn" data-tab="varieta">🍇 Varietà</div>
+      <div class="tabbtn" data-tab="varieta">◆ Varietà</div>
       <div class="tabbtn" data-tab="info">ⓘ Dati</div>
     </div>
     <div id="sheetBody"></div>
@@ -328,7 +349,13 @@ function gestisciFile(file){
 
 // ---------- mappa ----------
 function initMap(){
-  map = L.map('map', {zoomControl:false, attributionControl:true}).setView([45.94, 13.23], 12); // default: Friuli VG
+  map = L.map('map', {
+    zoomControl:false, attributionControl:true,
+    // Rotazione libera della mappa: l'utente può orientarla come vuole
+    // ruotando con due dita sullo schermo (gesto naturale, come Google/Apple Maps);
+    // il pulsante bussola in basso a destra riporta la mappa a "nord in alto".
+    rotate:true, bearing:0, rotateControl:false, touchRotate:true, shiftKeyRotate:true, compassBearing:false
+  }).setView([45.94, 13.23], 12); // default: Friuli VG
 
   tileLayers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom:20, attribution:'&copy; OpenStreetMap'
@@ -340,13 +367,32 @@ function initMap(){
   L.control.zoom({position:'bottomleft'}).addTo(map);
 
   map.on('dragstart', ()=>{ if(followGps){ followGps=false; document.getElementById('btnLocate').classList.remove('active'); } });
+  map.on('rotate', aggiornaBussola);
+  aggiornaBussola();
 }
+
+// ---------- rotazione mappa a piacimento (bussola) ----------
+function aggiornaBussola(){
+  const bearing = Math.round(map.getBearing ? map.getBearing() : 0);
+  const btn = document.getElementById('btnCompass');
+  const needle = document.getElementById('compassNeedle');
+  const deg = document.getElementById('compassDeg');
+  // la freccia indica sempre dove si trova il vero Nord rispetto all'orientamento attuale della mappa
+  needle.style.transform = `rotate(${-bearing}deg)`;
+  const norm = ((bearing%360)+360)%360;
+  deg.textContent = norm+'°';
+  btn.classList.toggle('rotated', Math.abs(((norm+180)%360)-180) > 1);
+}
+document.getElementById('btnCompass').addEventListener('click', ()=>{
+  if(map.setBearing) map.setBearing(0);
+});
 
 function toggleTiles(){
   map.removeLayer(tileLayers[currentTileKey]);
   currentTileKey = currentTileKey==='osm' ? 'sat' : 'osm';
   tileLayers[currentTileKey].addTo(map);
-  toast(currentTileKey==='osm' ? '🗺 Mappa stradale' : '🛰 Vista satellitare');
+  document.getElementById('btnLayers').textContent = currentTileKey==='osm' ? 'SAT' : 'MAPPA';
+  toast(currentTileKey==='osm' ? 'Mappa stradale' : 'Vista satellitare');
 }
 
 let layerGroup = null;
@@ -362,13 +408,16 @@ function disegnaVigneti(){
     righe.forEach(r=>{
       L.polyline(r.fLine, {color:'#ffc107', weight:2.5, opacity:.85}).addTo(layerGroup);
 
-      // etichetta filare
+      // etichetta filare: solo il numero (es. "F1"), per una lettura rapida in campo.
+      // rotateWithView:false mantiene il testo sempre leggibile (dritto) anche quando
+      // la mappa viene ruotata dall'utente, invece di girare assieme ad essa.
       const lbl = L.marker(r.fLine[0], {
         icon: L.divIcon({
           className:'', iconAnchor:[0,10], iconSize:null,
-          html:`<div style="background:rgba(26,74,26,.9);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)">${vc.v.nome} · F${r.numero}</div>`
+          html:`<div style="background:rgba(26,74,26,.9);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)">F${r.numero}</div>`
         }),
-        interactive:false
+        interactive:false,
+        rotateWithView:false
       }).addTo(layerGroup);
 
       r.piante.forEach(pl=>{
@@ -565,25 +614,62 @@ function renderVigList(){
   if(!list.children.length) list.innerHTML = '<p style="color:var(--text2);font-size:13px">Nessun risultato.</p>';
 }
 
-function renderVarieta(){
-  const body = document.getElementById('sheetBody');
+// Per ogni varietà, individua in quali filari (di quale vigneto) compare, scandendo le
+// piante di ogni filare — funziona sia per filari mono-varietà sia misti/ampelografici.
+function raccogliDatiVarieta(){
   const tot = {};
   vigneti.forEach(v=>{
+    const meta = v.meta||{};
+    const filari = v.filari||[];
+    const vars = v.vars||[];
+    const getVar = id=>vars.find(x=>x.id===id)||null;
+
+    filari.forEach((f,fi)=>{
+      const numero = meta.invertFilari ? filari.length-fi : fi+1;
+      const idsPresenti = new Set();
+      (f.piante||[]).forEach(p=>{ if(p.varietaId!=null) idsPresenti.add(p.varietaId); });
+      if(!idsPresenti.size && f.varietaId!=null) idsPresenti.add(f.varietaId); // fallback filare mono
+      idsPresenti.forEach(id=>{
+        const vr = getVar(id);
+        if(!vr) return;
+        if(!tot[vr.nome]) tot[vr.nome] = {color:vr.color, n:0, byVigneto:{}};
+        if(!tot[vr.nome].byVigneto[v.nome]) tot[vr.nome].byVigneto[v.nome] = new Set();
+        tot[vr.nome].byVigneto[v.nome].add(numero);
+      });
+    });
+    // conteggio totale viti per varietà: usa il totale già calcolato dal planner (più affidabile)
     Object.entries(v.varSet||{}).forEach(([n,c])=>{
-      if(!tot[n]) tot[n] = {n:0, color:null};
+      if(!tot[n]) tot[n] = {color:null, n:0, byVigneto:{}};
       tot[n].n += c;
     });
-    (v.vars||[]).forEach(vr=>{ if(tot[vr.nome]) tot[vr.nome].color = vr.color; });
   });
+  return tot;
+}
+
+function renderVarieta(){
+  const body = document.getElementById('sheetBody');
+  const tot = raccogliDatiVarieta();
   const entries = Object.entries(tot).sort((a,b)=>b[1].n-a[1].n);
   if(!entries.length){ body.innerHTML = '<p style="color:var(--text2);font-size:13px">Nessuna varietà disponibile: importa prima un file.</p>'; return; }
+  const multiVigneto = vigneti.length>1;
   body.innerHTML = `<input class="search-box" id="searchVar" placeholder="Cerca varietà…"><div id="varList"></div>`;
   function draw(){
     const q = document.getElementById('searchVar').value.toLowerCase();
     const list = document.getElementById('varList');
-    list.innerHTML = entries.filter(([n])=>n.toLowerCase().includes(q)).map(([n,d])=>
-      `<div class="var-item"><span class="vc" style="background:${d.color||'#888'}"></span><span class="vn">${n}</span><span class="vcount">${d.n} viti</span></div>`
-    ).join('') || '<p style="color:var(--text2);font-size:13px">Nessun risultato.</p>';
+    list.innerHTML = entries.filter(([n])=>n.toLowerCase().includes(q)).map(([n,d])=>{
+      const gruppi = Object.entries(d.byVigneto).map(([vname,set])=>{
+        const numeri = Array.from(set).sort((a,b)=>a-b).map(x=>'F'+x).join(', ');
+        const prefisso = multiVigneto ? `${vname}: ` : '';
+        return `<span class="ftag">${prefisso}<b>${numeri}</b></span>`;
+      }).join('');
+      return `<div class="var-item">
+        <span class="vc" style="background:${d.color||'#888'}"></span>
+        <div class="vi-main">
+          <div class="vn-row"><span class="vn">${n}</span><span class="vcount">${d.n} viti</span></div>
+          <div class="var-filari">${gruppi||'<span class="ftag">nessun filare individuato</span>'}</div>
+        </div>
+      </div>`;
+    }).join('') || '<p style="color:var(--text2);font-size:13px">Nessun risultato.</p>';
   }
   document.getElementById('searchVar').addEventListener('input', draw);
   draw();
@@ -604,7 +690,7 @@ function renderInfo(){
       </div>
     </div>
     <button class="btn secondary" id="btnReimport" style="width:100%;justify-content:center;margin-bottom:8px">⇪ Importa nuovo file JSON</button>
-    <button class="btn secondary" id="btnClear" style="width:100%;justify-content:center;background:#3a1c1c;border-color:#5a2626">🗑 Cancella dati salvati sul telefono</button>
+    <button class="btn secondary" id="btnClear" style="width:100%;justify-content:center;background:#3a1c1c;border-color:#5a2626">Cancella dati salvati sul telefono</button>
     <p style="color:var(--text2);font-size:11.5px;margin-top:14px;line-height:1.5">
       I dati restano salvati sul telefono anche offline. Per aggiornarli, esporta di nuovo il JSON da VignaPlanner desktop (scheda “▣ Vigneti” → “↓ Esporta JSON”) e ricaricalo qui: sostituirà i dati precedenti.
     </p>`;
