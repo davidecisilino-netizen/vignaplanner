@@ -91,6 +91,7 @@ body{
   font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 10px rgba(0,0,0,.4); cursor:pointer;
 }
 .fab.active{background:var(--blue); border-color:var(--blue); color:#fff;}
+.fab.fab-on{background:var(--g3); border-color:var(--g3); color:#fff;}
 .fab:active{transform:scale(.94);}
 #btnCompass{position:relative;}
 #btnCompass .compass-needle{display:inline-block; font-size:19px; transition:transform .12s linear; transform-origin:50% 50%;}
@@ -182,6 +183,7 @@ input[type=file]{display:none;}
       <span class="deg-badge" id="compassDeg">0°</span>
     </div>
     <div class="fab" id="btnLocate" title="Vai alla mia posizione">◎</div>
+    <div class="fab fab-on" id="btnLabels" title="Mostra/nascondi etichette filari" style="font-size:12px;font-weight:700">F1</div>
     <div class="fab" id="btnLayers" title="Cambia mappa" style="font-size:11px;font-weight:700;letter-spacing:.3px">SAT</div>
   </div>
 
@@ -219,10 +221,12 @@ input[type=file]{display:none;}
 
 const LS_KEY = 'vpm_vigneti_v1';
 const LS_VIS_KEY = 'vpm_visibili_v1';
+const LS_LBL_KEY = 'vpm_mostra_etichette_v1';
 
 let vigneti = [];          // array grezzo caricato dal JSON (uno o più vigneti)
 let vignetiCalc = [];      // stessi vigneti + geometria calcolata (filari/piante/pali) e layer leaflet
 let visibili = {};         // id -> bool, quali vigneti mostrare in mappa
+let mostraEtichette = true; // mostra/nasconde le etichette dei filari (F1, F2...) in mappa
 let map, gpsMarker, gpsCircle, watchId = null, followGps = false;
 let currentTab = 'vigneti';
 let tileLayers = {}, currentTileKey = 'osm';
@@ -288,12 +292,16 @@ function calcolaGeomVigneto(v){
   const righe = filari.map((f, fi)=>{
     const dy = posFilare(fi)*interFilare;
     const fLine = [ offNW(0,dy), offNW(f.lunghezza,dy) ];
+    // Punto etichetta: spostato di 1.4 m PRIMA dell'inizio fisico del filare (dx=0), cioè in
+    // capezzagna, così l'etichetta non si sovrappone mai alla prima vite del filare (che sta
+    // a dx=0) qualunque sia la lunghezza o l'inversione di numerazione delle viti.
+    const labelPt = offNW(-1.4, dy);
     const piante = (f.piante||[]).map((p,pi)=>({
       ll: offNW(pi*(f.distViti||1), dy), p, numero: numVite(pi, f.piante.length)
     }));
     const nPali = Math.floor((f.lunghezza||0)/distPali)+1;
     const pali = Array.from({length:nPali}, (_,pp)=>offNW(pp*distPali, dy));
-    return { f, fi, numero:numFilare(fi), fLine, piante, pali };
+    return { f, fi, numero:numFilare(fi), fLine, labelPt, piante, pali };
   });
 
   return { righe, getV, vars };
@@ -304,6 +312,9 @@ function salvaLocale(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(vigneti)); }catch(e){ console.error(e); }
   try{ localStorage.setItem(LS_VIS_KEY, JSON.stringify(visibili)); }catch(e){}
 }
+function salvaPrefEtichette(){
+  try{ localStorage.setItem(LS_LBL_KEY, JSON.stringify(mostraEtichette)); }catch(e){}
+}
 function caricaLocale(){
   try{
     const raw = localStorage.getItem(LS_KEY);
@@ -313,6 +324,10 @@ function caricaLocale(){
     const rawV = localStorage.getItem(LS_VIS_KEY);
     if(rawV) visibili = JSON.parse(rawV);
   }catch(e){ visibili = {}; }
+  try{
+    const rawL = localStorage.getItem(LS_LBL_KEY);
+    if(rawL!=null) mostraEtichette = JSON.parse(rawL);
+  }catch(e){ mostraEtichette = true; }
 }
 
 function importaJson(data){
@@ -408,17 +423,20 @@ function disegnaVigneti(){
     righe.forEach(r=>{
       L.polyline(r.fLine, {color:'#ffc107', weight:2.5, opacity:.85}).addTo(layerGroup);
 
-      // etichetta filare: solo il numero (es. "F1"), per una lettura rapida in campo.
-      // rotateWithView:false mantiene il testo sempre leggibile (dritto) anche quando
-      // la mappa viene ruotata dall'utente, invece di girare assieme ad essa.
-      const lbl = L.marker(r.fLine[0], {
-        icon: L.divIcon({
-          className:'', iconAnchor:[0,10], iconSize:null,
-          html:`<div style="background:rgba(26,74,26,.9);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)">F${r.numero}</div>`
-        }),
-        interactive:false,
-        rotateWithView:false
-      }).addTo(layerGroup);
+      // Etichetta filare: testo verticale (le lettere restano dritte, impilate dall'alto verso
+      // il basso: "F" sopra, numero sotto) posizionato in capezzagna, prima della prima vite,
+      // così non la sovrappone mai. rotateWithView:false la mantiene sempre dritta/leggibile
+      // anche ruotando liberamente la mappa.
+      if(mostraEtichette){
+        const lbl = L.marker(r.labelPt, {
+          icon: L.divIcon({
+            className:'', iconAnchor:[10,17], iconSize:null,
+            html:`<div style="background:rgba(26,74,26,.92);color:#fff;font-size:10px;font-weight:700;padding:5px 3px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.4);writing-mode:vertical-rl;text-orientation:upright;letter-spacing:1px;line-height:1.05">F${r.numero}</div>`
+          }),
+          interactive:false,
+          rotateWithView:false
+        }).addTo(layerGroup);
+      }
 
       r.piante.forEach(pl=>{
         const v = getV(pl.p.varietaId);
@@ -520,6 +538,13 @@ document.getElementById('btnLocate').addEventListener('click', ()=>{
   else if(followGps) toast('In attesa del segnale GPS…');
 });
 document.getElementById('btnLayers').addEventListener('click', toggleTiles);
+document.getElementById('btnLabels').addEventListener('click', ()=>{
+  mostraEtichette = !mostraEtichette;
+  document.getElementById('btnLabels').classList.toggle('fab-on', mostraEtichette);
+  salvaPrefEtichette();
+  disegnaVigneti();
+  toast(mostraEtichette ? 'Etichette filari visibili' : 'Etichette filari nascoste');
+});
 
 // ---------- import file ----------
 const fileInput = document.getElementById('fileInput');
@@ -711,6 +736,7 @@ function renderInfo(){
 window.addEventListener('load', ()=>{
   initMap();
   caricaLocale();
+  document.getElementById('btnLabels').classList.toggle('fab-on', mostraEtichette);
   ricalcolaTutto();
   avviaGps();
   if('serviceWorker' in navigator){
