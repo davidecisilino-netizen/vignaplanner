@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>VignaPlanner Campo</title>
+<meta name="description" content="Consulta in campo, con il GPS del cellulare, i vigneti creati con VignaPlanner: varietà, filari e viti su mappa.">
+<meta name="theme-color" content="#1a4a1a">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VignaPlanner Campo">
+<link rel="icon" href="icons/icon-192.png">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<style>
+:root{
+  --g1:#0e2f0e; --g2:#1a4a1a; --g3:#2d7a2d; --g4:#6b8f6b; --g5:#e8f2e8;
+  --bg:#0e1410; --panel:#12291a; --panel2:#173b21; --line:#25502e;
+  --text:#eef7ee; --text2:#a9c7ac; --accent:#ffc107; --danger:#e05353; --blue:#1e88e5;
+  --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;margin:0;overscroll-behavior:none;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg); color:var(--text); display:flex; flex-direction:column; height:100vh; height:100dvh;
+}
+#topbar{
+  display:flex; align-items:center; gap:8px; padding:calc(8px + var(--safe-top)) 10px 8px;
+  background:var(--g1); border-bottom:1px solid var(--line); z-index:1000; flex-shrink:0;
+}
+#topbar h1{font-size:15px; margin:0; font-weight:700; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.icon-btn{
+  background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:10px;
+  width:38px; height:38px; display:flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; flex-shrink:0;
+}
+.icon-btn:active{background:var(--g3);}
+#mapWrap{flex:1; position:relative; min-height:0;}
+#map{width:100%; height:100%; background:#0a1a0a;}
+
+.leaflet-popup-content-wrapper{background:var(--panel); color:var(--text); border-radius:10px;}
+.leaflet-popup-tip{background:var(--panel);}
+.leaflet-popup-content{margin:10px 12px; font-size:13px; line-height:1.5;}
+.leaflet-control-attribution{font-size:9px; background:rgba(14,20,16,.7)!important; color:#9c9!important;}
+.leaflet-control-attribution a{color:#bcd!important;}
+
+.pp-title{font-weight:700; font-size:14px; margin-bottom:2px;}
+.pp-row{display:flex; justify-content:space-between; gap:10px;}
+.pp-lbl{color:var(--text2);}
+.pp-dot{display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; border:1px solid rgba(255,255,255,.4);}
+
+/* Empty state overlay */
+#emptyState{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column;
+  gap:14px; padding:30px; text-align:center; background:var(--bg); z-index:500;
+}
+#emptyState .es-icon{font-size:48px; opacity:.5;}
+#emptyState h2{margin:0; font-size:18px;}
+#emptyState p{margin:0; color:var(--text2); font-size:13.5px; max-width:320px; line-height:1.5;}
+.btn{
+  background:var(--g3); color:#fff; border:none; padding:11px 18px; border-radius:10px; font-size:14.5px;
+  font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:8px;
+}
+.btn:active{background:var(--g2);}
+.btn.secondary{background:var(--panel2); border:1px solid var(--line); color:var(--text);}
+.btn.small{padding:7px 12px; font-size:12.5px; border-radius:8px;}
+
+/* Floating GPS/status pill */
+#gpsStatus{
+  position:absolute; top:10px; left:10px; right:10px; z-index:600; display:flex; gap:8px; pointer-events:none;
+}
+.pill{
+  background:rgba(18,41,26,.92); border:1px solid var(--line); color:var(--text2); font-size:11.5px;
+  padding:6px 10px; border-radius:20px; pointer-events:auto; display:flex; align-items:center; gap:6px;
+  backdrop-filter:blur(4px);
+}
+.pill b{color:var(--text); font-weight:600;}
+.pill.warn{color:var(--accent); border-color:#5a4a1a;}
+.pill.err{color:var(--danger); border-color:#5a2626;}
+
+/* Floating action buttons bottom-right */
+#fabs{position:absolute; right:10px; bottom:calc(10px + var(--safe-bottom)); z-index:600; display:flex; flex-direction:column; gap:10px;}
+.fab{
+  width:48px; height:48px; border-radius:50%; background:var(--panel2); border:1px solid var(--line); color:var(--text);
+  font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 10px rgba(0,0,0,.4); cursor:pointer;
+}
+.fab.active{background:var(--blue); border-color:var(--blue); color:#fff;}
+.fab:active{transform:scale(.94);}
+
+/* Bottom sheet: list of vigneti / varieties, legend */
+#sheet{
+  position:absolute; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line);
+  border-radius:16px 16px 0 0; z-index:700; max-height:72vh; display:flex; flex-direction:column;
+  transform:translateY(100%); transition:transform .25s ease; box-shadow:0 -4px 20px rgba(0,0,0,.4);
+}
+#sheet.open{transform:translateY(0);}
+#sheetHandle{width:38px; height:4px; background:var(--line); border-radius:3px; margin:9px auto 4px;}
+#sheetHead{display:flex; align-items:center; gap:8px; padding:2px 14px 8px; border-bottom:1px solid var(--line);}
+#sheetHead h3{font-size:14px; margin:0; flex:1;}
+#sheetTabs{display:flex; gap:6px; padding:8px 12px 0;}
+.tabbtn{flex:1; text-align:center; padding:8px 4px; border-radius:8px; font-size:12.5px; font-weight:600; color:var(--text2); background:var(--panel2); border:1px solid var(--line); cursor:pointer;}
+.tabbtn.active{background:var(--g3); color:#fff; border-color:var(--g3);}
+#sheetBody{overflow-y:auto; padding:10px 14px 16px; flex:1;}
+
+.search-box{
+  width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:10px;
+  padding:9px 12px; font-size:14px; margin-bottom:10px;
+}
+.search-box::placeholder{color:#5f7f63;}
+
+.vig-item{
+  background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:8px; cursor:pointer;
+}
+.vig-item.disabled{opacity:.4;}
+.vig-item .vi-top{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+.vig-item h4{margin:0; font-size:14.5px;}
+.vig-item .vi-meta{font-size:11.5px; color:var(--text2); margin-top:4px; display:flex; gap:10px; flex-wrap:wrap;}
+.chk{width:20px; height:20px; border-radius:6px; border:2px solid var(--g4); flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:13px;}
+.chk.on{background:var(--g3); border-color:var(--g3);}
+.vig-item .vi-vars{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px;}
+.vtag{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; gap:4px;}
+
+.var-item{display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--line); font-size:13.5px;}
+.var-item .vc{width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid rgba(255,255,255,.35);}
+.var-item .vn{flex:1;}
+.var-item .vcount{color:var(--text2); font-size:12px;}
+
+#stack-info{font-size:12.5px; color:var(--text2); line-height:1.6;}
+#stack-info b{color:var(--text);}
+.info-block{background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:10px;}
+
+input[type=file]{display:none;}
+
+.toast{
+  position:fixed; left:50%; bottom:calc(24px + var(--safe-bottom)); transform:translateX(-50%);
+  background:#111; color:#fff; padding:10px 16px; border-radius:10px; font-size:13px; z-index:2000;
+  opacity:0; pointer-events:none; transition:opacity .25s, transform .25s; max-width:88vw; text-align:center;
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
+
+#sheetScrim{position:absolute; inset:0; background:rgba(0,0,0,.35); z-index:650; opacity:0; pointer-events:none; transition:opacity .2s;}
+#sheetScrim.show{opacity:1; pointer-events:auto;}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <button class="icon-btn" id="btnMenu" title="Vigneti e varietà">☰</button>
+  <h1 id="titleTxt">VignaPlanner Campo</h1>
+  <button class="icon-btn" id="btnImport" title="Importa JSON dal desktop">⇪</button>
+</div>
+
+<div id="mapWrap">
+  <div id="map"></div>
+
+  <div id="gpsStatus"></div>
+
+  <div id="fabs">
+    <div class="fab" id="btnLocate" title="Vai alla mia posizione">◎</div>
+    <div class="fab" id="btnLayers" title="Cambia mappa">🗺</div>
+  </div>
+
+  <div id="sheetScrim"></div>
+  <div id="sheet">
+    <div id="sheetHandle"></div>
+    <div id="sheetHead"><h3 id="sheetTitle">Vigneti</h3><button class="icon-btn" id="btnCloseSheet" style="width:32px;height:32px;font-size:15px">✕</button></div>
+    <div id="sheetTabs">
+      <div class="tabbtn active" data-tab="vigneti">▣ Vigneti</div>
+      <div class="tabbtn" data-tab="varieta">🍇 Varietà</div>
+      <div class="tabbtn" data-tab="info">ⓘ Dati</div>
+    </div>
+    <div id="sheetBody"></div>
+  </div>
+
+  <div id="emptyState" style="display:none">
+    <div class="es-icon">▣</div>
+    <h2>Nessun vigneto caricato</h2>
+    <p>Nel VignaPlanner desktop, apri la scheda <b>“▣ Vigneti”</b> e premi <b>“↓ Esporta JSON”</b>: si scarica il file <b>vigneti_ERSA.json</b>. Caricalo qui sotto per vederlo in mappa con il GPS.</p>
+    <button class="btn" id="btnImportEmpty">⇪ Carica file JSON</button>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="application/json,.json">
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================================
+   VignaPlanner Campo — visualizzatore mobile GPS per i vigneti VignaPlanner
+   Legge il file "vigneti_ERSA.json" prodotto dal pulsante "↓ Esporta JSON"
+   della scheda "Vigneti salvati" del planner desktop e ne calcola la
+   proiezione geografica reale (stesso algoritmo del planner) di filari,
+   viti e pali, per consultarla in campo con il GPS del telefono.
+   ========================================================================= */
+
+const LS_KEY = 'vpm_vigneti_v1';
+const LS_VIS_KEY = 'vpm_visibili_v1';
+
+let vigneti = [];          // array grezzo caricato dal JSON (uno o più vigneti)
+let vignetiCalc = [];      // stessi vigneti + geometria calcolata (filari/piante/pali) e layer leaflet
+let visibili = {};         // id -> bool, quali vigneti mostrare in mappa
+let map, gpsMarker, gpsCircle, watchId = null, followGps = false;
+let currentTab = 'vigneti';
+let tileLayers = {}, currentTileKey = 'osm';
+
+// ---------- utilità UI ----------
+function toast(msg, ms){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>t.classList.remove('show'), ms||2600);
+}
+function uidVigneto(v, idx){ return v.id || (v.nome+'_'+idx); }
+
+// ---------- replica ESATTA dell'algoritmo geometrico del VignaPlanner desktop ----------
+// (stesse formule di offsetVerticeNW / posFilare / numFilare / numVite / calcolaGeom)
+function offsetVerticeNW(vtx, maxL, H){
+  const cx = maxL/2, cy = H/2;
+  switch(vtx){
+    case 'NW': return {dx:0,dy:0};
+    case 'N':  return {dx:-cx,dy:0};
+    case 'NE': return {dx:-maxL,dy:0};
+    case 'W':  return {dx:0,dy:-cy};
+    case 'E':  return {dx:-maxL,dy:-cy};
+    case 'SW': return {dx:0,dy:-H};
+    case 'S':  return {dx:-cx,dy:-H};
+    case 'SE': return {dx:-maxL,dy:-H};
+    default:   return {dx:0,dy:0};
+  }
+}
+function calcolaGeomVigneto(v){
+  const meta = v.meta || {};
+  const mapPos = v.mapPos || {};
+  const filari = v.filari || [];
+  if(!filari.length || mapPos.lat==null || mapPos.lng==null) return null;
+
+  const lat = mapPos.lat, lng = mapPos.lng, rotDeg = mapPos.rot||0;
+  const vtx = mapPos.vertice || 'NW';
+  const interFilare = meta.interFilare || 2.2;
+  const invertFilari = !!meta.invertFilari;
+  const invertViti = !!meta.invertViti;
+  const invertOrdineFisico = !!meta.invertOrdineFisico;
+  const distPali = meta.distPali || 5;
+
+  const DL = 1/111320;
+  const DLn = 1/(111320*Math.cos(lat*Math.PI/180));
+  const rot = rotDeg*Math.PI/180;
+  const cos = Math.cos(rot), sin = Math.sin(rot);
+  function off(dx,dy){ return [lat+(dx*sin-dy*cos)*DL, lng+(dx*cos+dy*sin)*DLn]; }
+
+  const maxL = Math.max(...filari.map(f=>f.lunghezza||0));
+  const H = (filari.length-1)*interFilare;
+  const o = offsetVerticeNW(vtx, maxL, H);
+  const [nwLat, nwLng] = off(o.dx, o.dy);
+  function offNW(dx,dy){ return [nwLat+(dx*sin-dy*cos)*DL, nwLng+(dx*cos+dy*sin)*DLn]; }
+
+  function posFilare(idx){ return invertOrdineFisico ? (filari.length-1-idx) : idx; }
+  function numFilare(idx){ return invertFilari ? filari.length-idx : idx+1; }
+  function numVite(idx, tot){ return invertViti ? tot-idx : idx+1; }
+
+  const vars = v.vars || [];
+  function getV(id){ return vars.find(x=>x.id===id) || null; }
+
+  const righe = filari.map((f, fi)=>{
+    const dy = posFilare(fi)*interFilare;
+    const fLine = [ offNW(0,dy), offNW(f.lunghezza,dy) ];
+    const piante = (f.piante||[]).map((p,pi)=>({
+      ll: offNW(pi*(f.distViti||1), dy), p, numero: numVite(pi, f.piante.length)
+    }));
+    const nPali = Math.floor((f.lunghezza||0)/distPali)+1;
+    const pali = Array.from({length:nPali}, (_,pp)=>offNW(pp*distPali, dy));
+    return { f, fi, numero:numFilare(fi), fLine, piante, pali };
+  });
+
+  return { righe, getV, vars };
+}
+
+// ---------- caricamento / persistenza ----------
+function salvaLocale(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(vigneti)); }catch(e){ console.error(e); }
+  try{ localStorage.setItem(LS_VIS_KEY, JSON.stringify(visibili)); }catch(e){}
+}
+function caricaLocale(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(raw){ vigneti = JSON.parse(raw); }
+  }catch(e){ vigneti = []; }
+  try{
+    const rawV = localStorage.getItem(LS_VIS_KEY);
+    if(rawV) visibili = JSON.parse(rawV);
+  }catch(e){ visibili = {}; }
+}
+
+function importaJson(data){
+  let arr;
+  if(Array.isArray(data)) arr = data;                    // esportaTuttiVigneti(): array di vigneti
+  else if(Array.isArray(data.vigneti)) arr = data.vigneti; // eventuale backup completo (vp31)
+  else if(data.nome && (data.filari||data.mapPos)) arr = [data]; // singolo vigneto
+  else { toast('⚠ File non riconosciuto: usa "↓ Esporta JSON" dalla scheda Vigneti'); return; }
+
+  if(!arr.length){ toast('⚠ Il file non contiene vigneti salvati'); return; }
+
+  vigneti = arr;
+  visibili = {};
+  arr.forEach((v,i)=>{ visibili[uidVigneto(v,i)] = true; });
+  salvaLocale();
+  ricalcolaTutto();
+  toast('✓ Importati '+arr.length+' vigneti');
+  document.getElementById('emptyState').style.display='none';
+}
+
+function gestisciFile(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const data = JSON.parse(e.target.result);
+      importaJson(data);
+    }catch(err){
+      toast('⚠ File JSON non valido');
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ---------- mappa ----------
+function initMap(){
+  map = L.map('map', {zoomControl:false, attributionControl:true}).setView([45.94, 13.23], 12); // default: Friuli VG
+
+  tileLayers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:20, attribution:'&copy; OpenStreetMap'
+  });
+  tileLayers.sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom:20, attribution:'Esri World Imagery'
+  });
+  tileLayers.osm.addTo(map);
+  L.control.zoom({position:'bottomleft'}).addTo(map);
+
+  map.on('dragstart', ()=>{ if(followGps){ followGps=false; document.getElementById('btnLocate').classList.remove('active'); } });
+}
+
+function toggleTiles(){
+  map.removeLayer(tileLayers[currentTileKey]);
+  currentTileKey = currentTileKey==='osm' ? 'sat' : 'osm';
+  tileLayers[currentTileKey].addTo(map);
+  toast(currentTileKey==='osm' ? '🗺 Mappa stradale' : '🛰 Vista satellitare');
+}
+
+let layerGroup = null;
+function disegnaVigneti(){
+  if(layerGroup) map.removeLayer(layerGroup);
+  layerGroup = L.featureGroup();
+
+  vignetiCalc.forEach(vc=>{
+    const id = vc._id;
+    if(!visibili[id]) return;
+    const { righe, getV } = vc.geom;
+
+    righe.forEach(r=>{
+      L.polyline(r.fLine, {color:'#ffc107', weight:2.5, opacity:.85}).addTo(layerGroup);
+
+      // etichetta filare
+      const lbl = L.marker(r.fLine[0], {
+        icon: L.divIcon({
+          className:'', iconAnchor:[0,10], iconSize:null,
+          html:`<div style="background:rgba(26,74,26,.9);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)">${vc.v.nome} · F${r.numero}</div>`
+        }),
+        interactive:false
+      }).addTo(layerGroup);
+
+      r.piante.forEach(pl=>{
+        const v = getV(pl.p.varietaId);
+        const marker = L.circleMarker(pl.ll, {
+          radius:5, fillColor: v?v.color:'#888', fillOpacity:.9, color:'#fff', weight:1
+        });
+        marker.bindPopup(
+          `<div class="pp-title"><span class="pp-dot" style="background:${v?v.color:'#888'}"></span>${v?v.nome:'—'}</div>`+
+          `<div class="pp-row"><span class="pp-lbl">Vigneto</span><b>${vc.v.nome}</b></div>`+
+          `<div class="pp-row"><span class="pp-lbl">Filare</span><b>F${r.numero}</b></div>`+
+          `<div class="pp-row"><span class="pp-lbl">Vite</span><b>N.${pl.numero}</b></div>`+
+          (pl.p.portainnesto?`<div class="pp-row"><span class="pp-lbl">Portainnesto</span><b>${pl.p.portainnesto}</b></div>`:'')+
+          (pl.p.clone && pl.p.clone!=='—' ?`<div class="pp-row"><span class="pp-lbl">Clone</span><b>${pl.p.clone}</b></div>`:'')
+        );
+        marker.addTo(layerGroup);
+      });
+
+      r.pali.forEach(ll=>{
+        L.circleMarker(ll, {radius:2.5, fillColor:'#8d6e63', fillOpacity:1, color:'#4e342e', weight:.5}).addTo(layerGroup);
+      });
+    });
+
+    // vertice di ancoraggio / marker vigneto
+    if(vc.v.mapPos){
+      L.marker([vc.v.mapPos.lat, vc.v.mapPos.lng], {
+        icon: L.divIcon({className:'', iconAnchor:[9,9], iconSize:[18,18],
+          html:`<div style="width:14px;height:14px;border-radius:50%;background:#1565c0;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`})
+      }).bindPopup(`<div class="pp-title">▣ ${vc.v.nome}</div>`+
+        `<div class="pp-row"><span class="pp-lbl">Filari</span><b>${vc.v.totFilari||'—'}</b></div>`+
+        `<div class="pp-row"><span class="pp-lbl">Piante</span><b>${vc.v.totPiante||'—'}</b></div>`+
+        `<div class="pp-row"><span class="pp-lbl">Ettari</span><b>${vc.v.ha||'—'}</b></div>`
+      ).addTo(layerGroup);
+    }
+  });
+
+  layerGroup.addTo(map);
+}
+
+function ricalcolaTutto(){
+  vignetiCalc = vigneti.map((v,i)=>{
+    const id = uidVigneto(v,i);
+    const geom = calcolaGeomVigneto(v);
+    return { _id:id, v, geom };
+  }).filter(x=>x.geom); // scarta vigneti senza posizione GPS o senza filari
+
+  const senzaPos = vigneti.length - vignetiCalc.length;
+  document.getElementById('emptyState').style.display = vigneti.length===0 ? 'flex' : 'none';
+
+  disegnaVigneti();
+  renderSheet();
+  fitToVisibili();
+
+  if(senzaPos>0) toast('⚠ '+senzaPos+' vigneto/i senza posizione GPS: posizionali nel planner (◎ Posiziona vigneto)', 4200);
+}
+
+function fitToVisibili(){
+  const visibiliCalc = vignetiCalc.filter(vc=>visibili[vc._id]);
+  if(!visibiliCalc.length) return;
+  const bounds = L.latLngBounds([]);
+  visibiliCalc.forEach(vc=>{
+    vc.geom.righe.forEach(r=>{ bounds.extend(r.fLine[0]); bounds.extend(r.fLine[1]); });
+  });
+  if(bounds.isValid()) map.fitBounds(bounds, {padding:[40,40], maxZoom:18});
+}
+
+// ---------- GPS ----------
+function statusPill(html, cls){
+  document.getElementById('gpsStatus').innerHTML = html ? `<div class="pill ${cls||''}">${html}</div>` : '';
+}
+
+function avviaGps(){
+  if(!('geolocation' in navigator)){ toast('⚠ GPS non disponibile su questo dispositivo/browser'); return; }
+  statusPill('◎ Ricerca GPS…');
+  watchId = navigator.geolocation.watchPosition(pos=>{
+    const {latitude, longitude, accuracy} = pos.coords;
+    statusPill(`◎ GPS attivo · precisione <b>${Math.round(accuracy)} m</b>`);
+    const ll = [latitude, longitude];
+    if(!gpsMarker){
+      gpsMarker = L.circleMarker(ll, {radius:8, fillColor:'#1e88e5', fillOpacity:1, color:'#fff', weight:3}).addTo(map);
+      gpsCircle = L.circle(ll, {radius:accuracy, color:'#1e88e5', weight:1, fillOpacity:.08}).addTo(map);
+    } else {
+      gpsMarker.setLatLng(ll);
+      gpsCircle.setLatLng(ll); gpsCircle.setRadius(accuracy);
+    }
+    if(followGps) map.setView(ll, Math.max(map.getZoom(), 18));
+  }, err=>{
+    let msg = '⚠ GPS non disponibile';
+    if(err.code===1) msg = '⚠ Permesso GPS negato: abilitalo nelle impostazioni del browser/telefono';
+    else if(err.code===2) msg = '⚠ Posizione non disponibile';
+    else if(err.code===3) msg = '⚠ Timeout ricerca GPS';
+    statusPill(msg, 'err');
+  }, { enableHighAccuracy:true, maximumAge:2000, timeout:15000 });
+}
+
+document.getElementById('btnLocate').addEventListener('click', ()=>{
+  followGps = !followGps;
+  document.getElementById('btnLocate').classList.toggle('active', followGps);
+  if(followGps && gpsMarker) map.setView(gpsMarker.getLatLng(), 18);
+  else if(followGps) toast('In attesa del segnale GPS…');
+});
+document.getElementById('btnLayers').addEventListener('click', toggleTiles);
+
+// ---------- import file ----------
+const fileInput = document.getElementById('fileInput');
+document.getElementById('btnImport').addEventListener('click', ()=>fileInput.click());
+document.getElementById('btnImportEmpty').addEventListener('click', ()=>fileInput.click());
+fileInput.addEventListener('change', e=>gestisciFile(e.target.files[0]));
+
+// ---------- bottom sheet ----------
+const sheet = document.getElementById('sheet');
+const scrim = document.getElementById('sheetScrim');
+function openSheet(){ sheet.classList.add('open'); scrim.classList.add('show'); }
+function closeSheet(){ sheet.classList.remove('open'); scrim.classList.remove('show'); }
+document.getElementById('btnMenu').addEventListener('click', openSheet);
+document.getElementById('btnCloseSheet').addEventListener('click', closeSheet);
+scrim.addEventListener('click', closeSheet);
+
+document.querySelectorAll('.tabbtn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    currentTab = b.dataset.tab;
+    renderSheet();
+  });
+});
+
+function renderSheet(){
+  const body = document.getElementById('sheetBody');
+  const title = document.getElementById('sheetTitle');
+  if(currentTab==='vigneti'){
+    title.textContent = 'Vigneti ('+vigneti.length+')';
+    if(!vigneti.length){ body.innerHTML = '<p style="color:var(--text2);font-size:13px">Nessun vigneto importato. Usa il pulsante ⇪ in alto.</p>'; return; }
+    body.innerHTML = `<input class="search-box" id="searchVig" placeholder="Cerca vigneto…">`+
+      `<div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn small secondary" id="btnAll">Mostra tutti</button>
+        <button class="btn small secondary" id="btnNone">Nascondi tutti</button>
+      </div>`+
+      `<div id="vigList"></div>`;
+    document.getElementById('btnAll').addEventListener('click', ()=>{ vigneti.forEach((v,i)=>visibili[uidVigneto(v,i)]=true); salvaLocale(); disegnaVigneti(); renderVigList(); });
+    document.getElementById('btnNone').addEventListener('click', ()=>{ vigneti.forEach((v,i)=>visibili[uidVigneto(v,i)]=false); salvaLocale(); disegnaVigneti(); renderVigList(); });
+    document.getElementById('searchVig').addEventListener('input', renderVigList);
+    renderVigList();
+  } else if(currentTab==='varieta'){
+    title.textContent = 'Varietà presenti';
+    renderVarieta();
+  } else {
+    title.textContent = 'Dati importati';
+    renderInfo();
+  }
+}
+
+function renderVigList(){
+  const q = (document.getElementById('searchVig')?.value||'').toLowerCase();
+  const list = document.getElementById('vigList');
+  if(!list) return;
+  list.innerHTML='';
+  vigneti.forEach((v,i)=>{
+    if(q && !v.nome.toLowerCase().includes(q)) return;
+    const id = uidVigneto(v,i);
+    const hasGeo = vignetiCalc.some(vc=>vc._id===id);
+    const on = !!visibili[id];
+    const varsTop = Object.entries(v.varSet||{}).slice(0,4);
+    const div = document.createElement('div');
+    div.className = 'vig-item'+(hasGeo?'':' disabled');
+    div.innerHTML = `
+      <div class="vi-top">
+        <div>
+          <h4>${v.nome}</h4>
+          <div class="vi-meta">
+            <span>${v.totFilari||0} filari</span><span>${v.totPiante||0} viti</span><span>${v.ha||'—'} ha</span>
+            ${!hasGeo?'<span style="color:var(--accent)">⚠ senza GPS</span>':''}
+          </div>
+        </div>
+        <div class="chk ${on?'on':''}">${on?'✓':''}</div>
+      </div>
+      <div class="vi-vars">${varsTop.map(([n,c])=>`<span class="vtag">${n} ×${c}</span>`).join('')}</div>
+    `;
+    div.addEventListener('click', ()=>{
+      if(!hasGeo){ toast('⚠ Vigneto senza coordinate GPS: posizionalo nel planner desktop'); return; }
+      visibili[id] = !visibili[id];
+      salvaLocale();
+      disegnaVigneti();
+      renderVigList();
+      if(visibili[id]){
+        const vc = vignetiCalc.find(x=>x._id===id);
+        const bounds = L.latLngBounds([]);
+        vc.geom.righe.forEach(r=>{bounds.extend(r.fLine[0]);bounds.extend(r.fLine[1]);});
+        if(bounds.isValid()){ closeSheet(); map.fitBounds(bounds,{padding:[40,40], maxZoom:18}); }
+      }
+    });
+    list.appendChild(div);
+  });
+  if(!list.children.length) list.innerHTML = '<p style="color:var(--text2);font-size:13px">Nessun risultato.</p>';
+}
+
+function renderVarieta(){
+  const body = document.getElementById('sheetBody');
+  const tot = {};
+  vigneti.forEach(v=>{
+    Object.entries(v.varSet||{}).forEach(([n,c])=>{
+      if(!tot[n]) tot[n] = {n:0, color:null};
+      tot[n].n += c;
+    });
+    (v.vars||[]).forEach(vr=>{ if(tot[vr.nome]) tot[vr.nome].color = vr.color; });
+  });
+  const entries = Object.entries(tot).sort((a,b)=>b[1].n-a[1].n);
+  if(!entries.length){ body.innerHTML = '<p style="color:var(--text2);font-size:13px">Nessuna varietà disponibile: importa prima un file.</p>'; return; }
+  body.innerHTML = `<input class="search-box" id="searchVar" placeholder="Cerca varietà…"><div id="varList"></div>`;
+  function draw(){
+    const q = document.getElementById('searchVar').value.toLowerCase();
+    const list = document.getElementById('varList');
+    list.innerHTML = entries.filter(([n])=>n.toLowerCase().includes(q)).map(([n,d])=>
+      `<div class="var-item"><span class="vc" style="background:${d.color||'#888'}"></span><span class="vn">${n}</span><span class="vcount">${d.n} viti</span></div>`
+    ).join('') || '<p style="color:var(--text2);font-size:13px">Nessun risultato.</p>';
+  }
+  document.getElementById('searchVar').addEventListener('input', draw);
+  draw();
+}
+
+function renderInfo(){
+  const body = document.getElementById('sheetBody');
+  const totFilari = vigneti.reduce((s,v)=>s+(v.totFilari||0),0);
+  const totPiante = vigneti.reduce((s,v)=>s+(v.totPiante||0),0);
+  const totHa = vigneti.reduce((s,v)=>s+(parseFloat(v.ha)||0),0);
+  body.innerHTML = `
+    <div class="info-block">
+      <div id="stack-info">
+        <div><b>${vigneti.length}</b> vigneti importati</div>
+        <div><b>${totFilari}</b> filari totali</div>
+        <div><b>${totPiante}</b> viti totali</div>
+        <div><b>${totHa.toFixed(2)}</b> ettari totali (somma)</div>
+      </div>
+    </div>
+    <button class="btn secondary" id="btnReimport" style="width:100%;justify-content:center;margin-bottom:8px">⇪ Importa nuovo file JSON</button>
+    <button class="btn secondary" id="btnClear" style="width:100%;justify-content:center;background:#3a1c1c;border-color:#5a2626">🗑 Cancella dati salvati sul telefono</button>
+    <p style="color:var(--text2);font-size:11.5px;margin-top:14px;line-height:1.5">
+      I dati restano salvati sul telefono anche offline. Per aggiornarli, esporta di nuovo il JSON da VignaPlanner desktop (scheda “▣ Vigneti” → “↓ Esporta JSON”) e ricaricalo qui: sostituirà i dati precedenti.
+    </p>`;
+  document.getElementById('btnReimport').addEventListener('click', ()=>fileInput.click());
+  document.getElementById('btnClear').addEventListener('click', ()=>{
+    if(confirm('Cancellare tutti i vigneti caricati su questo telefono?')){
+      vigneti=[]; vignetiCalc=[]; visibili={};
+      localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_VIS_KEY);
+      if(layerGroup) map.removeLayer(layerGroup);
+      document.getElementById('emptyState').style.display='flex';
+      renderSheet();
+      toast('Dati cancellati');
+    }
+  });
+}
+
+// ---------- avvio ----------
+window.addEventListener('load', ()=>{
+  initMap();
+  caricaLocale();
+  ricalcolaTutto();
+  avviaGps();
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+});
+</script>
+</body>
+</html>
