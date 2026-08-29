@@ -303,25 +303,20 @@ function calcolaGeomVigneto(v){
     return { f, fi, numero:numFilare(fi), fLine, piante, pali };
   });
 
-  return { righe, getV, vars, rotDeg };
+  return { righe, getV, vars, interFilare, lat };
 }
 
-// Calcola lo spostamento in PIXEL (non in metri) da applicare all'etichetta di un filare
-// affinché resti sempre visivamente "fuori" dal filare (verso la capezzagna, dalla parte
-// della vite n.1), a qualunque livello di zoom: uno spostamento in metri infatti a zoom
-// molto ravvicinati (necessari per distinguere le singole viti) risulterebbe di pochi
-// pixel e l'etichetta finirebbe comunque per sovrapporsi alla prima vite. Lo spostamento è
-// calcolato nel sistema di riferimento geografico (nord in alto) e non nello schermo: dato
-// che la mappa può essere ruotata liberamente dall'utente, l'intero livello dei marker
-// viene poi ruotato in blocco insieme alla mappa, quindi la direzione resta sempre corretta.
-function offsetEtichettaPx(rotDeg, distanzaPx){
-  // direzione del filare (asse dx) come rotta rispetto al nord: 90° - rotDeg
-  // direzione "in uscita" dal filare (verso la capezzagna, prima della vite 1): opposta, +180°
-  const thetaOutward = (270 - rotDeg) * Math.PI/180;
-  return {
-    x: distanzaPx * Math.sin(thetaOutward),
-    y: -distanzaPx * Math.cos(thetaOutward)
-  };
+// Con un interfilare tipico di 2-2.5 m, lo spazio fra due filari in pixel è quasi sempre
+// inferiore all'altezza di un'etichetta leggibile, a qualunque zoom ragionevole per il
+// lavoro in campo: mostrare un'etichetta per OGNI filare le farebbe quindi sovrapporre le une
+// alle altre pressoché sempre. La soluzione è mostrarne una ogni "passo" filari, calcolato
+// dinamicamente in base allo zoom corrente, in modo che due etichette consecutive abbiano
+// sempre almeno "labelH" pixel di distanza fra loro: più ci si avvicina con lo zoom, più il
+// passo si riduce, fino a mostrare l'etichetta di ogni singolo filare quando lo spazio basta.
+function passoEtichette(lat, interFilare, zoom, labelH){
+  const pixelPerMetro = Math.pow(2,zoom)/(156543.03392*Math.cos(lat*Math.PI/180));
+  const gapPx = interFilare*pixelPerMetro;
+  return Math.max(1, Math.ceil(labelH/gapPx));
 }
 
 // ---------- caricamento / persistenza ----------
@@ -405,6 +400,11 @@ function initMap(){
 
   map.on('dragstart', ()=>{ if(followGps){ followGps=false; document.getElementById('btnLocate').classList.remove('active'); } });
   map.on('rotate', aggiornaBussola);
+  // Le etichette dei filari dipendono dal livello di zoom (per evitare che si sovrappongano
+  // tra loro) e dalla direzione reale del filare sullo schermo (che può cambiare se la
+  // mappa viene ruotata): le si ridisegna quindi ad ogni cambio di zoom o di rotazione.
+  map.on('zoomend', ()=>{ if(vignetiCalc.length) disegnaVigneti(); });
+  map.on('rotate', ()=>{ if(vignetiCalc.length) disegnaVigneti(); });
   aggiornaBussola();
 }
 
@@ -433,56 +433,69 @@ function toggleTiles(){
 }
 
 let layerGroup = null;
+const LABEL_H = 20;        // altezza approssimativa (px) di un'etichetta filare, usata per calcolare il "passo" (vedi passoEtichette)
+const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare
+const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente)
+
 function disegnaVigneti(){
   if(layerGroup) map.removeLayer(layerGroup);
   layerGroup = L.featureGroup();
+  const zoomCorrente = map.getZoom();
 
   vignetiCalc.forEach(vc=>{
     const id = vc._id;
     if(!visibili[id]) return;
-    const { righe, getV, rotDeg } = vc.geom;
+    const { righe, getV, interFilare, lat } = vc.geom;
+
+    // "Passo": con questo zoom, mostra un'etichetta ogni N filari (N=1 quando lo spazio
+    // è sufficiente per etichettarli tutti). Calcolato una sola volta per vigneto perché
+    // interFilare è lo stesso per tutti i filari del blocco.
+    const passo = passoEtichette(lat, interFilare, zoomCorrente, LABEL_H);
 
     righe.forEach(r=>{
       L.polyline(r.fLine, {color:'#ffc107', weight:2.5, opacity:.85}).addTo(layerGroup);
 
-      // Etichetta numero filare: testo orizzontale, ancorata esattamente al punto della vite
-      // n.1 (inizio del filare) ma "spinta" verso l'esterno del filare (in capezzagna) con
-      // uno spostamento fisso in pixel (offsetEtichettaPx), così non si sovrappone mai alla
-      // prima vite a nessuno zoom. rotateWithView:false la mantiene sempre dritta/leggibile
-      // anche ruotando liberamente la mappa.
-      if(mostraEtichette){
-        const off1 = offsetEtichettaPx(rotDeg, 30);
-        const bw=34, bh=20;
-        L.marker(r.fLine[0], {
-          icon: L.divIcon({
-            className:'', iconAnchor:[bw/2-off1.x, bh/2-off1.y], iconSize:[bw,bh],
-            html:`<div style="background:rgba(26,74,26,.92);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4);text-align:center">F${r.numero}</div>`
-          }),
-          interactive:false,
-          rotateWithView:false
-        }).addTo(layerGroup);
-      }
+      const mostraQuestoFilare = (r.fi % passo === 0);
+      // Direzione del filare calcolata sui pixel REALMENTE proiettati dei suoi due
+      // estremi (non su una formula trigonometrica separata): è il modo più affidabile
+      // per essere certi che "esterno del filare" punti sempre dalla parte giusta,
+      // qualunque sia l'orientamento del vigneto e la rotazione attuale della mappa.
+      if(mostraQuestoFilare && (mostraEtichette || mostraEtichetteVarieta)){
+        const p0 = map.latLngToLayerPoint(L.latLng(r.fLine[0]));
+        const p1 = map.latLngToLayerPoint(L.latLng(r.fLine[1]));
+        let dx = p1.x-p0.x, dy = p1.y-p0.y;
+        const len = Math.hypot(dx,dy)||1;
+        const outX = -dx/len, outY = -dy/len; // direzione opposta al filare = verso la capezzagna, prima della vite 1
 
-      // Etichetta filare + varietà: stesso principio, ma spostata ancora più all'esterno
-      // (per non sovrapporsi alla precedente, se entrambe sono attive) e con l'indicazione
-      // della varietà — o "Misto"/"Ampelo" per i filari a più varietà, come nel planner desktop.
-      if(mostraEtichetteVarieta){
-        const off2 = offsetEtichettaPx(rotDeg, 58);
-        const bw2=112, bh2=20;
-        let testoVar, colVar;
-        if(r.f.tipo==='mista'){ testoVar='Misto'; colVar='#9e9e9e'; }
-        else if(r.f.tipo==='ampelo'){ testoVar='Ampelo'; colVar='#8e5fd1'; }
-        else { const v=getV(r.f.varietaId); testoVar = v?v.nome:'—'; colVar = v?v.color:'#888'; }
-        L.marker(r.fLine[0], {
-          icon: L.divIcon({
-            className:'', iconAnchor:[bw2/2-off2.x, bh2/2-off2.y], iconSize:[bw2,bh2],
-            html:`<div style="background:rgba(20,26,22,.92);color:#fff;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4);display:inline-flex;align-items:center;gap:5px;max-width:${bw2}px;overflow:hidden;text-overflow:ellipsis">`+
-              `<span style="width:8px;height:8px;border-radius:50%;background:${colVar};flex-shrink:0;border:1px solid rgba(255,255,255,.4)"></span>`+
-              `<b style="font-weight:700">F${r.numero}</b><span style="opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${testoVar}</span></div>`
-          }),
-          interactive:false,
-          rotateWithView:false
-        }).addTo(layerGroup);
+        if(mostraEtichette){
+          const bw=32, bh=LABEL_H;
+          const offX = outX*LABEL_D_NUM, offY = outY*LABEL_D_NUM;
+          L.marker(r.fLine[0], {
+            icon: L.divIcon({
+              className:'', iconAnchor:[bw/2-offX, bh/2-offY], iconSize:[bw,bh],
+              html:`<div style="background:rgba(26,74,26,.94);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);text-align:center">F${r.numero}</div>`
+            }),
+            interactive:false, rotateWithView:false
+          }).addTo(layerGroup);
+        }
+
+        if(mostraEtichetteVarieta){
+          let testoVar, colVar;
+          if(r.f.tipo==='mista'){ testoVar='Misto'; colVar='#9e9e9e'; }
+          else if(r.f.tipo==='ampelo'){ testoVar='Ampelo'; colVar='#8e5fd1'; }
+          else { const v=getV(r.f.varietaId); testoVar = v?v.nome:'—'; colVar = v?v.color:'#888'; }
+          const bw2=Math.min(150, Math.max(70, 34+testoVar.length*6.2)), bh2=LABEL_H;
+          const offX = outX*LABEL_D_VAR, offY = outY*LABEL_D_VAR;
+          L.marker(r.fLine[0], {
+            icon: L.divIcon({
+              className:'', iconAnchor:[bw2/2-offX, bh2/2-offY], iconSize:[bw2,bh2],
+              html:`<div style="background:rgba(20,26,22,.94);color:#fff;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);display:inline-flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis">`+
+                `<span style="width:8px;height:8px;border-radius:50%;background:${colVar};flex-shrink:0;border:1px solid rgba(255,255,255,.4)"></span>`+
+                `<b style="font-weight:700">F${r.numero}</b><span style="opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${testoVar}</span></div>`
+            }),
+            interactive:false, rotateWithView:false
+          }).addTo(layerGroup);
+        }
       }
 
       r.piante.forEach(pl=>{
@@ -585,19 +598,31 @@ document.getElementById('btnLocate').addEventListener('click', ()=>{
   else if(followGps) toast('In attesa del segnale GPS…');
 });
 document.getElementById('btnLayers').addEventListener('click', toggleTiles);
+// Se allo zoom attuale non c'è spazio per etichettare OGNI filare, il sistema ne mostra
+// solo una ogni tot (vedi passoEtichette): avvisa l'utente che vede etichette parziali,
+// invece di lasciargli pensare che manchino dei filari o che il pulsante non funzioni bene.
+function avvisaSePassoMaggioreDi1(){
+  const visibiliCalc = vignetiCalc.filter(vc=>visibili[vc._id]);
+  if(!visibiliCalc.length) return;
+  const passoMax = Math.max(...visibiliCalc.map(vc=>passoEtichette(vc.geom.lat, vc.geom.interFilare, map.getZoom(), LABEL_H)));
+  if(passoMax > 1) toast('Zoom ridotto: mostrata un\'etichetta ogni '+passoMax+' filari — avvicinati per vederle tutte', 3600);
+}
+
 document.getElementById('btnLabels').addEventListener('click', ()=>{
   mostraEtichette = !mostraEtichette;
   document.getElementById('btnLabels').classList.toggle('fab-on', mostraEtichette);
   salvaPrefEtichette();
   disegnaVigneti();
-  toast(mostraEtichette ? 'Etichette numero filare visibili' : 'Etichette numero filare nascoste');
+  if(mostraEtichette) avvisaSePassoMaggioreDi1();
+  else toast('Etichette numero filare nascoste');
 });
 document.getElementById('btnLabelsVar').addEventListener('click', ()=>{
   mostraEtichetteVarieta = !mostraEtichetteVarieta;
   document.getElementById('btnLabelsVar').classList.toggle('fab-on', mostraEtichetteVarieta);
   salvaPrefEtichette();
   disegnaVigneti();
-  toast(mostraEtichetteVarieta ? 'Etichette filare+varietà visibili' : 'Etichette filare+varietà nascoste');
+  if(mostraEtichetteVarieta) avvisaSePassoMaggioreDi1();
+  else toast('Etichette filare+varietà nascoste');
 });
 
 // ---------- import file ----------

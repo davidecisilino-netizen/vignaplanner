@@ -5,7 +5,7 @@
 // richiedono connessione: se già visitate in una zona, il browser potrebbe
 // comunque averle già in cache HTTP, ma non è garantito offline al 100%.
 
-const CACHE_NAME = 'vpm-shell-v5';
+const CACHE_NAME = 'vpm-shell-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -13,6 +13,8 @@ const ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-180.png',
+  './icons/icon-192-maskable.png',
+  './icons/icon-512-maskable.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
   'https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js'
