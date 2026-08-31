@@ -543,22 +543,31 @@ function aggiornaEtichette(){
     righe.forEach(r=>{
       if(r.fi % passo !== 0) return;
 
-      // Direzione del filare calcolata sui pixel REALMENTE proiettati dei suoi due
-      // estremi (non su una formula trigonometrica separata): è il modo più affidabile
-      // per essere certi che "esterno del filare" punti sempre dalla parte giusta,
-      // qualunque sia l'orientamento del vigneto e la rotazione attuale della mappa.
+      // Direzione del filare calcolata sui pixel REALMENTE proiettati dei suoi due estremi.
       const p0 = map.latLngToLayerPoint(L.latLng(r.fLine[0]));
       const p1 = map.latLngToLayerPoint(L.latLng(r.fLine[1]));
       let dx = p1.x-p0.x, dy = p1.y-p0.y;
       const len = Math.hypot(dx,dy)||1;
       const outX = -dx/len, outY = -dy/len; // direzione opposta al filare = verso la capezzagna, prima della vite 1
 
+      // IMPORTANTE: lo spostamento verso l'esterno non viene applicato con iconAnchor
+      // (un meccanismo interno di Leaflet la cui interazione con la rotazione libera della
+      // mappa non è affidabile — è la causa dello sfasamento delle etichette osservato a
+      // mappa ruotata). Si calcola invece un vero punto geografico spostato in pixel e lo
+      // si riconverte in lat/lng con layerPointToLatLng: essendo l'esatta funzione inversa
+      // di latLngToLayerPoint, il punto risultante è per costruzione coerente a QUALUNQUE
+      // rotazione/zoom della mappa. Il marcatore viene poi posizionato lì con un ancoraggio
+      // semplice e fisso (nessuna matematica extra nel passaggio finale), esattamente come
+      // già avviene — correttamente, a riprova — per viti e pali.
+      function puntoEsterno(distanzaPx){
+        return map.layerPointToLatLng(L.point(p0.x+outX*distanzaPx, p0.y+outY*distanzaPx));
+      }
+
       if(mostraEtichette){
         const bw=32, bh=LABEL_H;
-        const offX = outX*LABEL_D_NUM, offY = outY*LABEL_D_NUM;
-        L.marker(r.fLine[0], {
+        L.marker(puntoEsterno(LABEL_D_NUM), {
           icon: L.divIcon({
-            className:'', iconAnchor:[bw/2-offX, bh/2-offY], iconSize:[bw,bh],
+            className:'', iconAnchor:[bw/2, bh/2], iconSize:[bw,bh],
             html:`<div style="background:rgba(26,74,26,.94);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);text-align:center">F${r.numero}</div>`
           }),
           interactive:false, rotateWithView:false
@@ -571,10 +580,9 @@ function aggiornaEtichette(){
         else if(r.f.tipo==='ampelo'){ testoVar='Ampelo'; colVar='#8e5fd1'; }
         else { const v=getV(r.f.varietaId); testoVar = v?v.nome:'—'; colVar = v?v.color:'#888'; }
         const bw2=Math.min(150, Math.max(70, 34+testoVar.length*6.2)), bh2=LABEL_H;
-        const offX = outX*LABEL_D_VAR, offY = outY*LABEL_D_VAR;
-        L.marker(r.fLine[0], {
+        L.marker(puntoEsterno(LABEL_D_VAR), {
           icon: L.divIcon({
-            className:'', iconAnchor:[bw2/2-offX, bh2/2-offY], iconSize:[bw2,bh2],
+            className:'', iconAnchor:[bw2/2, bh2/2], iconSize:[bw2,bh2],
             html:`<div style="background:rgba(20,26,22,.94);color:#fff;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);display:inline-flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis">`+
               `<span style="width:8px;height:8px;border-radius:50%;background:${colVar};flex-shrink:0;border:1px solid rgba(255,255,255,.4)"></span>`+
               `<b style="font-weight:700">F${r.numero}</b><span style="opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${testoVar}</span></div>`
