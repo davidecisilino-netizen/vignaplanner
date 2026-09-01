@@ -138,6 +138,16 @@ body{
 .vig-meta-grid .vmi{font-size:11px;}
 .vig-meta-grid .vml{color:var(--text2); margin-right:3px;}
 .vig-meta-grid .vmv{color:var(--text); font-weight:600;}
+.vig-struttura{margin-top:8px; padding-top:8px; border-top:1px solid var(--line);}
+.vig-struttura .vs-title{font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px;}
+.vig-struttura .vs-row{font-size:11px; color:var(--text2); margin-bottom:5px;}
+.vig-struttura .vs-row .vml{color:var(--text2); margin-right:3px;}
+.vig-struttura .vs-row .vmv{color:var(--text); font-weight:600;}
+.vig-struttura .vs-fili{display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px;}
+.vs-filo{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); color:var(--text2); white-space:nowrap;}
+.vs-filo b{color:var(--text); font-weight:700;}
+.vs-filo.banchina{border-color:var(--accent); color:var(--accent);}
+.vs-filo.banchina b{color:var(--accent);}
 .vig-note{font-size:11px; color:var(--text2); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin-top:8px; overflow-wrap:anywhere;}
 .vtag{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; gap:4px;}
 
@@ -787,6 +797,24 @@ function renderVigList(){
       chips.push(['Posizione', 'non impostata']);
     }
 
+    // Struttura verticale dell'impianto (pali, fili, cimatura): stessi dati e stessa
+    // formula di calcolo della parete vegetativa usati nella scheda "Struttura" del
+    // planner desktop, mostrati per intero (non solo il risultato finale della parete).
+    let strutturaHtml = '';
+    if(v.struttura && v.struttura.fili && v.struttura.fili.length){
+      const s = v.struttura;
+      const filiHtml = s.fili.map((f,fi)=>
+        `<span class="vs-filo${f.banchina?' banchina':''}">${f.banchina?'Banchina':'Filo '+(fi+1)} · <b>${f.altezza} cm</b> · ${f.tipo==='coppia'?'coppia':'singolo'}${f.diametro?' · Ø'+f.diametro+'mm':''}</span>`
+      ).join('');
+      strutturaHtml = `
+        <div class="vig-struttura">
+          <div class="vs-title">Struttura verticale</div>
+          <div class="vs-row"><span class="vml">Palo di testa</span><span class="vmv">${s.paloTesta??'—'} cm</span> &nbsp; <span class="vml">Palo intermedio</span><span class="vmv">${s.paloIntermedio??'—'} cm</span></div>
+          <div class="vs-fili">${filiHtml}</div>
+          <div class="vs-row"><span class="vml">Altezza totale</span><span class="vmv">${parete?parete.altezzaTotale:(s.altezzaTotale??'—')} cm</span> &nbsp; <span class="vml">Cimatura</span><span class="vmv">${s.cimatura??'—'} cm</span>${parete?` &nbsp; <span class="vml">Parete veg.</span><span class="vmv">${parete.parete} cm</span>`:''}</div>
+        </div>`;
+    }
+
     const div = document.createElement('div');
     div.className = 'vig-item'+(hasGeo?'':' disabled');
     div.innerHTML = `
@@ -802,6 +830,7 @@ function renderVigList(){
       </div>
       <div class="vi-vars">${varsTop.map(([n,c])=>`<span class="vtag">${n} ×${c}</span>`).join('')}</div>
       <div class="vig-meta-grid">${chips.map(([l,val])=>`<span class="vmi"><span class="vml">${l}</span><span class="vmv">${val}</span></span>`).join('')}</div>
+      ${strutturaHtml}
       ${v.note?`<div class="vig-note">${v.note}</div>`:''}
     `;
     div.addEventListener('click', ()=>{
