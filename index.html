@@ -176,6 +176,18 @@ input[type=file]{display:none;}
 
 #sheetScrim{position:absolute; inset:0; background:rgba(0,0,0,.35); z-index:650; opacity:0; pointer-events:none; transition:opacity .2s;}
 #sheetScrim.show{opacity:1; pointer-events:auto;}
+
+/* Overlay di caricamento, mostrato durante l'elaborazione di import pesanti */
+#loadingOverlay{
+  position:absolute; inset:0; z-index:1500; display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:14px; background:rgba(14,20,16,.88);
+}
+#loadingOverlay p{margin:0; color:var(--text2); font-size:13.5px;}
+.spinner{
+  width:34px; height:34px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--g3);
+  animation:vpm-spin .8s linear infinite;
+}
+@keyframes vpm-spin{ to{ transform:rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -220,6 +232,11 @@ input[type=file]{display:none;}
     <p>Nel VignaPlanner desktop, apri la scheda <b>“▣ Vigneti”</b> e premi <b>“↓ Esporta JSON”</b>: si scarica il file <b>vigneti_ERSA.json</b>. Caricalo qui sotto per vederlo in mappa con il GPS.</p>
     <button class="btn" id="btnImportEmpty">⇪ Carica file JSON</button>
   </div>
+
+  <div id="loadingOverlay" style="display:none">
+    <div class="spinner"></div>
+    <p id="loadingMsg">Elaborazione…</p>
+  </div>
 </div>
 
 <input type="file" id="fileInput" accept="application/json,.json">
@@ -254,6 +271,18 @@ function toast(msg, ms){
   t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h);
   t._h = setTimeout(()=>t.classList.remove('show'), ms||2600);
+}
+// Con vigneti molto grandi, l'elaborazione (calcolo geometria + creazione di migliaia di
+// marker) può richiedere qualche secondo, tutto sincrono: senza un indicatore l'app
+// sembrerebbe bloccata. mostraCaricamento va chiamata, e poi il lavoro pesante rimandato
+// con un breve setTimeout, così il browser fa in tempo a disegnare l'overlay PRIMA che il
+// thread principale si blocchi con il calcolo vero e proprio.
+function mostraCaricamento(msg){
+  document.getElementById('loadingMsg').textContent = msg||'Elaborazione…';
+  document.getElementById('loadingOverlay').style.display = 'flex';
+}
+function nascondiCaricamento(){
+  document.getElementById('loadingOverlay').style.display = 'none';
 }
 function uidVigneto(v, idx){ return v.id || (v.nome+'_'+idx); }
 
@@ -293,7 +322,7 @@ function calcolaGeomVigneto(v){
   const cos = Math.cos(rot), sin = Math.sin(rot);
   function off(dx,dy){ return [lat+(dx*sin-dy*cos)*DL, lng+(dx*cos+dy*sin)*DLn]; }
 
-  const maxL = Math.max(...filari.map(f=>f.lunghezza||0));
+  const maxL = filari.reduce((m,f)=>Math.max(m, f.lunghezza||0), 0);
   const H = (filari.length-1)*interFilare;
   const o = offsetVerticeNW(vtx, maxL, H);
   const [nwLat, nwLng] = off(o.dx, o.dy);
@@ -334,8 +363,20 @@ function passoEtichette(lat, interFilare, zoom, labelH){
 }
 
 // ---------- caricamento / persistenza ----------
-function salvaLocale(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(vigneti)); }catch(e){ console.error(e); }
+// Salva l'intero dataset importato: operazione potenzialmente pesante (può contenere
+// migliaia di viti), va chiamata SOLO quando il dataset cambia davvero (import, cancellazione)
+// — MAI per un semplice toggle di visibilità, che usa invece la più leggera salvaVisibilita().
+function salvaVigneti(){
+  try{
+    localStorage.setItem(LS_KEY, JSON.stringify(vigneti));
+  }catch(e){
+    console.error(e);
+    toast('⚠ Impossibile salvare i dati sul telefono (spazio esaurito?): potrebbero non essere disponibili alla riapertura', 4200);
+  }
+}
+// Salva solo quali vigneti sono accesi/spenti in mappa: un oggetto di poche decine di
+// booleani, scrittura istantanea anche con dataset molto grandi — usata ad ogni toggle.
+function salvaVisibilita(){
   try{ localStorage.setItem(LS_VIS_KEY, JSON.stringify(visibili)); }catch(e){}
 }
 function salvaPrefEtichette(){
@@ -373,7 +414,8 @@ function importaJson(data){
   vigneti = arr;
   visibili = {};
   arr.forEach((v,i)=>{ visibili[uidVigneto(v,i)] = true; });
-  salvaLocale();
+  salvaVigneti();
+  salvaVisibilita();
   ricalcolaTutto();
   toast('✓ Importati '+arr.length+' vigneti');
   document.getElementById('emptyState').style.display='none';
@@ -383,13 +425,22 @@ function gestisciFile(file){
   if(!file) return;
   const reader = new FileReader();
   reader.onload = e=>{
-    try{
-      const data = JSON.parse(e.target.result);
-      importaJson(data);
-    }catch(err){
-      toast('⚠ File JSON non valido');
-    }
+    mostraCaricamento('Elaborazione vigneti…');
+    // Il setTimeout (anche brevissimo) rimanda il parsing/elaborazione pesante al prossimo
+    // giro dell'event loop, dando al browser il tempo di disegnare l'overlay PRIMA che il
+    // thread principale si blocchi: altrimenti l'overlay e il lavoro pesante partirebbero
+    // nello stesso frame e l'utente non vedrebbe mai l'indicatore di caricamento.
+    setTimeout(()=>{
+      try{
+        const data = JSON.parse(e.target.result);
+        importaJson(data);
+      }catch(err){
+        toast('⚠ File JSON non valido');
+      }
+      nascondiCaricamento();
+    }, 30);
   };
+  reader.onerror = ()=>{ nascondiCaricamento(); toast('⚠ Impossibile leggere il file'); };
   reader.readAsText(file);
 }
 
@@ -461,74 +512,93 @@ function toggleTiles(){
   toast(currentTileKey==='osm' ? 'Mappa stradale' : 'Vista satellitare');
 }
 
-let layerStruttura = null;   // viti, pali, filari, marker di ancoraggio: pesante, ricostruito SOLO quando cambiano dati/visibilità
+let masterStruttura = null;  // contenitore sempre presente in mappa: raccoglie i layer dei singoli vigneti visibili
 let layerEtichette = null;   // solo le etichette dei filari: leggero, ricostruito anche ad ogni zoom/rotazione (vedi pianificaAggiornaEtichette)
 const LABEL_H = 20;        // altezza approssimativa (px) di un'etichetta filare, usata per calcolare il "passo" (vedi passoEtichette)
 const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare
 const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente)
 
-// Geometria "pesante": filari, viti, pali, marker di ancoraggio vigneto. Può contenere
-// migliaia di elementi: va ricostruita SOLO quando cambiano i dati importati o quali
-// vigneti sono visibili — MAI durante zoom/rotazione (Leaflet riposiziona da sé, in modo
-// nativo ed efficiente, gli elementi già presenti sulla mappa quando essa si muove/ruota/zooma).
-function disegnaStruttura(){
-  if(layerStruttura) map.removeLayer(layerStruttura);
-  layerStruttura = L.featureGroup();
+// Costruisce il layer (viti, pali, filari, marker di ancoraggio) di UN SOLO vigneto. Viene
+// chiamata una sola volta per vigneto e il risultato resta in cache in vc.layer: accendere e
+// spegnere la visibilità di un vigneto in seguito non lo ricostruisce più da zero, si limita
+// ad aggiungere/rimuovere questo layer già pronto — molto più veloce con più vigneti caricati.
+function costruisciLayerVigneto(vc){
+  const fg = L.featureGroup();
+  const { righe, getV } = vc.geom;
 
-  vignetiCalc.forEach(vc=>{
-    const id = vc._id;
-    if(!visibili[id]) return;
-    const { righe, getV } = vc.geom;
+  righe.forEach(r=>{
+    L.polyline(r.fLine, {color:'#ffc107', weight:2.5, opacity:.85}).addTo(fg);
 
-    righe.forEach(r=>{
-      L.polyline(r.fLine, {color:'#ffc107', weight:2.5, opacity:.85}).addTo(layerStruttura);
-
-      r.piante.forEach(pl=>{
-        const v = getV(pl.p.varietaId);
-        const marker = L.circleMarker(pl.ll, {
-          radius:5, fillColor: v?v.color:'#888', fillOpacity:.9, color:'#fff', weight:1
-        });
-        // Anno di impianto: se la vite ha un anno personalizzato (reimpianto) prevale su
-        // quello del filare, che a sua volta prevale sul default del vigneto — stessa
-        // logica "a cascata" usata nel planner desktop.
-        const annoEff = pl.p.annoImpianto!=null ? pl.p.annoImpianto
-          : (r.f.annoImpianto!=null ? r.f.annoImpianto
-          : (vc.v.meta?.annoImpianto!=null ? vc.v.meta.annoImpianto : null));
-        const reimpianto = pl.p.annoImpianto!=null && r.f.annoImpianto!=null && pl.p.annoImpianto!==r.f.annoImpianto
-          || (pl.p.annoImpianto!=null && r.f.annoImpianto==null && vc.v.meta?.annoImpianto!=null && pl.p.annoImpianto!==vc.v.meta.annoImpianto);
-        marker.bindPopup(
-          `<div class="pp-title"><span class="pp-dot" style="background:${v?v.color:'#888'}"></span>${v?v.nome:'—'}</div>`+
-          `<div class="pp-row"><span class="pp-lbl">Vigneto</span><b>${vc.v.nome}</b></div>`+
-          `<div class="pp-row"><span class="pp-lbl">Filare</span><b>F${r.numero}</b></div>`+
-          `<div class="pp-row"><span class="pp-lbl">Vite</span><b>N.${pl.numero}</b></div>`+
-          (annoEff!=null?`<div class="pp-row"><span class="pp-lbl">Anno impianto</span><b>${annoEff}${reimpianto?' (reimpianto)':''}</b></div>`:'')+
-          (pl.p.portainnesto?`<div class="pp-row"><span class="pp-lbl">Portainnesto</span><b>${pl.p.portainnesto}</b></div>`:'')+
-          (pl.p.clone && pl.p.clone!=='—' ?`<div class="pp-row"><span class="pp-lbl">Clone</span><b>${pl.p.clone}</b></div>`:'')
-        );
-        marker.addTo(layerStruttura);
+    r.piante.forEach(pl=>{
+      const v = getV(pl.p.varietaId);
+      const marker = L.circleMarker(pl.ll, {
+        radius:5, fillColor: v?v.color:'#888', fillOpacity:.9, color:'#fff', weight:1
       });
-
-      // interactive:false sui pali: non hanno popup né funzione al tocco, disattivare
-      // il pointer-hit-testing per loro alleggerisce ulteriormente il rendering.
-      r.pali.forEach(ll=>{
-        L.circleMarker(ll, {radius:2.5, fillColor:'#8d6e63', fillOpacity:1, color:'#4e342e', weight:.5, interactive:false}).addTo(layerStruttura);
-      });
+      // Anno di impianto: se la vite ha un anno personalizzato (reimpianto) prevale su
+      // quello del filare, che a sua volta prevale sul default del vigneto — stessa
+      // logica "a cascata" usata nel planner desktop.
+      const annoEff = pl.p.annoImpianto!=null ? pl.p.annoImpianto
+        : (r.f.annoImpianto!=null ? r.f.annoImpianto
+        : (vc.v.meta?.annoImpianto!=null ? vc.v.meta.annoImpianto : null));
+      const reimpianto = pl.p.annoImpianto!=null && r.f.annoImpianto!=null && pl.p.annoImpianto!==r.f.annoImpianto
+        || (pl.p.annoImpianto!=null && r.f.annoImpianto==null && vc.v.meta?.annoImpianto!=null && pl.p.annoImpianto!==vc.v.meta.annoImpianto);
+      marker.bindPopup(
+        `<div class="pp-title"><span class="pp-dot" style="background:${v?v.color:'#888'}"></span>${v?v.nome:'—'}</div>`+
+        `<div class="pp-row"><span class="pp-lbl">Vigneto</span><b>${vc.v.nome||'—'}</b></div>`+
+        `<div class="pp-row"><span class="pp-lbl">Filare</span><b>F${r.numero}</b></div>`+
+        `<div class="pp-row"><span class="pp-lbl">Vite</span><b>N.${pl.numero}</b></div>`+
+        (annoEff!=null?`<div class="pp-row"><span class="pp-lbl">Anno impianto</span><b>${annoEff}${reimpianto?' (reimpianto)':''}</b></div>`:'')+
+        (pl.p.portainnesto?`<div class="pp-row"><span class="pp-lbl">Portainnesto</span><b>${pl.p.portainnesto}</b></div>`:'')+
+        (pl.p.clone && pl.p.clone!=='—' ?`<div class="pp-row"><span class="pp-lbl">Clone</span><b>${pl.p.clone}</b></div>`:'')
+      );
+      marker.addTo(fg);
     });
 
-    // vertice di ancoraggio / marker vigneto
-    if(vc.v.mapPos){
-      L.marker([vc.v.mapPos.lat, vc.v.mapPos.lng], {
-        icon: L.divIcon({className:'', iconAnchor:[9,9], iconSize:[18,18],
-          html:`<div style="width:14px;height:14px;border-radius:50%;background:#1565c0;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`})
-      }).bindPopup(`<div class="pp-title">▣ ${vc.v.nome}</div>`+
-        `<div class="pp-row"><span class="pp-lbl">Filari</span><b>${vc.v.totFilari||'—'}</b></div>`+
-        `<div class="pp-row"><span class="pp-lbl">Piante</span><b>${vc.v.totPiante||'—'}</b></div>`+
-        `<div class="pp-row"><span class="pp-lbl">Ettari</span><b>${vc.v.ha||'—'}</b></div>`
-      ).addTo(layerStruttura);
-    }
+    // interactive:false sui pali: non hanno popup né funzione al tocco, disattivare
+    // il pointer-hit-testing per loro alleggerisce ulteriormente il rendering.
+    r.pali.forEach(ll=>{
+      L.circleMarker(ll, {radius:2.5, fillColor:'#8d6e63', fillOpacity:1, color:'#4e342e', weight:.5, interactive:false}).addTo(fg);
+    });
   });
 
-  layerStruttura.addTo(map);
+  // vertice di ancoraggio / marker vigneto
+  if(vc.v.mapPos){
+    L.marker([vc.v.mapPos.lat, vc.v.mapPos.lng], {
+      icon: L.divIcon({className:'', iconAnchor:[9,9], iconSize:[18,18],
+        html:`<div style="width:14px;height:14px;border-radius:50%;background:#1565c0;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`})
+    }).bindPopup(`<div class="pp-title">▣ ${vc.v.nome||'—'}</div>`+
+      `<div class="pp-row"><span class="pp-lbl">Filari</span><b>${vc.v.totFilari||'—'}</b></div>`+
+      `<div class="pp-row"><span class="pp-lbl">Piante</span><b>${vc.v.totPiante||'—'}</b></div>`+
+      `<div class="pp-row"><span class="pp-lbl">Ettari</span><b>${vc.v.ha||'—'}</b></div>`
+    ).addTo(fg);
+  }
+
+  return fg;
+}
+
+// Geometria "pesante": filari, viti, pali, marker di ancoraggio vigneto. Il layer di ogni
+// vigneto viene costruito una sola volta (vedi costruisciLayerVigneto) e da quel momento in
+// poi accendere/spegnere la visibilità è solo un addLayer/removeLayer su un layer già pronto
+// — MAI una ricostruzione completa. La geometria non viene MAI toccata durante zoom/rotazione
+// (Leaflet riposiziona da sé, in modo nativo ed efficiente, i layer già presenti in mappa).
+function disegnaStruttura(){
+  if(!masterStruttura) masterStruttura = L.layerGroup().addTo(map);
+  vignetiCalc.forEach(vc=>{
+    const visibile = !!visibili[vc._id];
+    if(visibile){
+      if(!vc.layer) vc.layer = costruisciLayerVigneto(vc);
+      if(!masterStruttura.hasLayer(vc.layer)) masterStruttura.addLayer(vc.layer);
+    } else if(vc.layer && masterStruttura.hasLayer(vc.layer)){
+      masterStruttura.removeLayer(vc.layer);
+    }
+  });
+}
+
+// Ripulisce completamente la cache dei layer costruiti finora: va chiamata SOLO quando
+// cambia il DATASET importato (nuovo file, o cancellazione), mai per un semplice toggle di
+// visibilità — altrimenti si perderebbe il vantaggio della cache appena descritta.
+function svuotaCacheStruttura(){
+  if(masterStruttura) masterStruttura.clearLayers();
 }
 
 // Solo le etichette dei filari: layer leggero, separato apposta da quello di viti/pali/filari
@@ -624,6 +694,11 @@ function ricalcolaTutto(){
   const senzaPos = vigneti.length - vignetiCalc.length;
   document.getElementById('emptyState').style.display = vigneti.length===0 ? 'flex' : 'none';
 
+  // Un nuovo import sostituisce interamente il dataset precedente: la cache dei layer
+  // per-vigneto (pensata per velocizzare i toggle di visibilità, non per persistere tra
+  // dataset diversi) va svuotata, altrimenti i vigneti del file precedente resterebbero
+  // visibili "a fantasma" mescolati a quelli nuovi.
+  svuotaCacheStruttura();
   disegnaVigneti();
   renderSheet();
   fitToVisibili();
@@ -646,8 +721,20 @@ function statusPill(html, cls){
   document.getElementById('gpsStatus').innerHTML = html ? `<div class="pill ${cls||''}">${html}</div>` : '';
 }
 
+// Distanza approssimata in metri tra due punti [lat,lng] vicini (stessa approssimazione
+// "piatta" già usata altrove nell'app per le conversioni gradi↔metri: sufficientemente
+// precisa su poche decine di metri, l'unico caso d'uso qui).
+function distanzaMetri(a, b){
+  const dLat = (a[0]-b[0])*111320;
+  const dLng = (a[1]-b[1])*111320*Math.cos(a[0]*Math.PI/180);
+  return Math.hypot(dLat, dLng);
+}
+
+let ultimaPosCentrata = null; // ultima posizione GPS su cui la mappa si è ricentrata (per il throttling sotto)
+
 function avviaGps(){
   if(!('geolocation' in navigator)){ toast('⚠ GPS non disponibile su questo dispositivo/browser'); return; }
+  if(watchId!=null) return; // già attivo, evita di avviare due watch in parallelo
   statusPill('◎ Ricerca GPS…');
   watchId = navigator.geolocation.watchPosition(pos=>{
     const {latitude, longitude, accuracy} = pos.coords;
@@ -660,7 +747,17 @@ function avviaGps(){
       gpsMarker.setLatLng(ll);
       gpsCircle.setLatLng(ll); gpsCircle.setRadius(accuracy);
     }
-    if(followGps) map.setView(ll, Math.max(map.getZoom(), 18));
+    // Il GPS "chiacchiera" spesso con micro-oscillazioni di 1-2 metri anche da fermi:
+    // ricentrare la mappa (con animazione) ad ogni singolo aggiornamento la fa sembrare
+    // "nervosa". Si ricentra solo se ci si è mossi davvero (>1.5 m) e senza animazione,
+    // per un aggancio alla posizione istantaneo e stabile invece che a scatti.
+    if(followGps){
+      const mossoAbbastanza = !ultimaPosCentrata || distanzaMetri(ll, ultimaPosCentrata) > 1.5;
+      if(mossoAbbastanza){
+        map.setView(ll, Math.max(map.getZoom(), 18), {animate:false});
+        ultimaPosCentrata = ll;
+      }
+    }
   }, err=>{
     let msg = '⚠ GPS non disponibile';
     if(err.code===1) msg = '⚠ Permesso GPS negato: abilitalo nelle impostazioni del browser/telefono';
@@ -670,10 +767,28 @@ function avviaGps(){
   }, { enableHighAccuracy:true, maximumAge:2000, timeout:15000 });
 }
 
+// Il GPS ad alta precisione consuma parecchia batteria: quando l'app va in background
+// (schermo spento, altra app in primo piano) non ha senso continuare a localizzare — si
+// sospende e si riprende automaticamente al ritorno in primo piano, per non tenere GPS
+// e batteria impegnati inutilmente per ore durante una giornata di lavoro in campo.
+function gestisciVisibilitaPagina(){
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){
+      if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+    } else {
+      avviaGps();
+    }
+  });
+}
+
 document.getElementById('btnLocate').addEventListener('click', ()=>{
   followGps = !followGps;
   document.getElementById('btnLocate').classList.toggle('active', followGps);
-  if(followGps && gpsMarker) map.setView(gpsMarker.getLatLng(), 18);
+  if(followGps && gpsMarker){
+    const ll = gpsMarker.getLatLng();
+    map.setView(ll, 18);
+    ultimaPosCentrata = [ll.lat, ll.lng];
+  }
   else if(followGps) toast('In attesa del segnale GPS…');
 });
 document.getElementById('btnLayers').addEventListener('click', toggleTiles);
@@ -740,8 +855,15 @@ function renderSheet(){
         <button class="btn small secondary" id="btnNone">Nascondi tutti</button>
       </div>`+
       `<div id="vigList"></div>`;
-    document.getElementById('btnAll').addEventListener('click', ()=>{ vigneti.forEach((v,i)=>visibili[uidVigneto(v,i)]=true); salvaLocale(); disegnaVigneti(); renderVigList(); });
-    document.getElementById('btnNone').addEventListener('click', ()=>{ vigneti.forEach((v,i)=>visibili[uidVigneto(v,i)]=false); salvaLocale(); disegnaVigneti(); renderVigList(); });
+    document.getElementById('btnAll').addEventListener('click', ()=>{
+      mostraCaricamento('Attivazione vigneti…');
+      setTimeout(()=>{
+        vigneti.forEach((v,i)=>visibili[uidVigneto(v,i)]=true);
+        salvaVisibilita(); disegnaVigneti(); renderVigList();
+        nascondiCaricamento();
+      }, 30);
+    });
+    document.getElementById('btnNone').addEventListener('click', ()=>{ vigneti.forEach((v,i)=>visibili[uidVigneto(v,i)]=false); salvaVisibilita(); disegnaVigneti(); renderVigList(); });
     document.getElementById('searchVig').addEventListener('input', renderVigList);
     renderVigList();
   } else if(currentTab==='varieta'){
@@ -770,7 +892,7 @@ function renderVigList(){
   if(!list) return;
   list.innerHTML='';
   vigneti.forEach((v,i)=>{
-    if(q && !v.nome.toLowerCase().includes(q)) return;
+    if(q && !(v.nome||'').toLowerCase().includes(q)) return;
     const id = uidVigneto(v,i);
     const hasGeo = vignetiCalc.some(vc=>vc._id===id);
     const on = !!visibili[id];
@@ -820,7 +942,7 @@ function renderVigList(){
     div.innerHTML = `
       <div class="vi-top">
         <div>
-          <h4>${v.nome}</h4>
+          <h4>${v.nome||'(vigneto senza nome)'}</h4>
           <div class="vi-meta">
             <span>${v.totFilari||0} filari</span><span>${v.totPiante||0} viti</span><span>${v.ha||'—'} ha</span>
             ${!hasGeo?'<span style="color:var(--accent)">⚠ senza GPS</span>':''}
@@ -836,7 +958,7 @@ function renderVigList(){
     div.addEventListener('click', ()=>{
       if(!hasGeo){ toast('⚠ Vigneto senza coordinate GPS: posizionalo nel planner desktop'); return; }
       visibili[id] = !visibili[id];
-      salvaLocale();
+      salvaVisibilita();
       disegnaVigneti();
       renderVigList();
       if(visibili[id]){
@@ -936,7 +1058,7 @@ function renderInfo(){
     if(confirm('Cancellare tutti i vigneti caricati su questo telefono?')){
       vigneti=[]; vignetiCalc=[]; visibili={};
       localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_VIS_KEY);
-      if(layerStruttura) map.removeLayer(layerStruttura);
+      if(masterStruttura) masterStruttura.clearLayers();
       if(layerEtichette) map.removeLayer(layerEtichette);
       document.getElementById('emptyState').style.display='flex';
       renderSheet();
@@ -947,12 +1069,36 @@ function renderInfo(){
 
 // ---------- avvio ----------
 window.addEventListener('load', ()=>{
-  initMap();
-  caricaLocale();
-  document.getElementById('btnLabels').classList.toggle('fab-on', mostraEtichette);
-  document.getElementById('btnLabelsVar').classList.toggle('fab-on', mostraEtichetteVarieta);
-  ricalcolaTutto();
-  avviaGps();
+  // Leaflet e il plugin di rotazione arrivano da CDN esterni: se al primissimo avvio il
+  // telefono non ha connessione (prima che il service worker li abbia messi in cache),
+  // 'L' non esiste e l'app, senza questo controllo, si bloccherebbe in silenzio con una
+  // mappa vuota e nessun pulsante funzionante. Meglio un messaggio chiaro e un modo per
+  // riprovare, così l'utente capisce cosa succede invece di pensare che l'app sia rotta.
+  if(typeof L === 'undefined'){
+    document.getElementById('mapWrap').innerHTML = `
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:30px;text-align:center;background:var(--bg)">
+        <div style="font-size:40px;opacity:.6">⚠</div>
+        <h2 style="margin:0;font-size:17px">Impossibile caricare la mappa</h2>
+        <p style="margin:0;color:var(--text2);font-size:13.5px;max-width:320px;line-height:1.5">
+          Al primo avvio serve una connessione dati per scaricare i componenti della mappa
+          (una sola volta: dopo funzionano anche offline). Controlla la connessione e riprova.
+        </p>
+        <button class="btn" onclick="location.reload()">Riprova</button>
+      </div>`;
+    return;
+  }
+  try{
+    initMap();
+    caricaLocale();
+    document.getElementById('btnLabels').classList.toggle('fab-on', mostraEtichette);
+    document.getElementById('btnLabelsVar').classList.toggle('fab-on', mostraEtichetteVarieta);
+    ricalcolaTutto();
+    avviaGps();
+    gestisciVisibilitaPagina();
+  }catch(e){
+    console.error(e);
+    toast('⚠ Si è verificato un problema all\'avvio. Prova a ricaricare l\'app.', 5000);
+  }
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
   }

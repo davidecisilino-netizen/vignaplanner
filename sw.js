@@ -5,7 +5,7 @@
 // richiedono connessione: se già visitate in una zona, il browser potrebbe
 // comunque averle già in cache HTTP, ma non è garantito offline al 100%.
 
-const CACHE_NAME = 'vpm-shell-v11';
+const CACHE_NAME = 'vpm-shell-v12';
 const ASSETS = [
   './',
   './index.html',
