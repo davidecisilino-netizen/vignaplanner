@@ -547,6 +547,7 @@ function costruisciLayerVigneto(vc){
         `<div class="pp-row"><span class="pp-lbl">Vigneto</span><b>${vc.v.nome||'—'}</b></div>`+
         `<div class="pp-row"><span class="pp-lbl">Filare</span><b>F${r.numero}</b></div>`+
         `<div class="pp-row"><span class="pp-lbl">Vite</span><b>N.${pl.numero}</b></div>`+
+        (vc.v.meta?.sistPot?`<div class="pp-row"><span class="pp-lbl">Sistema allevamento</span><b>${vc.v.meta.sistPot}</b></div>`:'')+
         (annoEff!=null?`<div class="pp-row"><span class="pp-lbl">Anno impianto</span><b>${annoEff}${reimpianto?' (reimpianto)':''}</b></div>`:'')+
         (pl.p.portainnesto?`<div class="pp-row"><span class="pp-lbl">Portainnesto</span><b>${pl.p.portainnesto}</b></div>`:'')+
         (pl.p.clone && pl.p.clone!=='—' ?`<div class="pp-row"><span class="pp-lbl">Clone</span><b>${pl.p.clone}</b></div>`:'')
