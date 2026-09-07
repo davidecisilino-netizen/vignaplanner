@@ -43,10 +43,12 @@ e ricarica il file nell'app: sovrascrive i dati precedenti sul telefono.
   zoomati poco (per avere una visione d'insieme) l'app mostra automaticamente solo un'etichetta
   ogni tot filari, per restare sempre leggibile e senza sovrapposizioni; avvicinandosi con lo
   zoom, le etichette aumentano di numero fino a comparire su ogni singolo filare.
-- **Viti** come pallini colorati per varietà (stesso colore usato nel planner); toccandole
-  si apre un popup con vigneto, numero filare, numero vite, **sistema di allevamento**,
-  **anno di impianto** (segnalato come "reimpianto" se diverso da quello del filare/vigneto,
-  cioè una vite ripiantata in epoca diversa dal resto), portainnesto e clone.
+- **Viti** come simboli colorati per varietà (stesso colore usato nel planner) e con la
+  **forma** che indica il sistema di allevamento effettivo della vite (cerchio, quadrato,
+  rombo, triangolo, stella, esagono, croce — configurabili nel desktop in "DB Allevamento");
+  toccandole si apre un popup con vigneto, numero filare, numero vite, **sistema di
+  allevamento**, **anno di impianto** (segnalato come "reimpianto" se diverso da quello del
+  filare/vigneto, cioè una vite ripiantata in epoca diversa dal resto), portainnesto e clone.
 - **Pali** come piccoli punti marroni lungo il filare.
 - **Pannello "▣ Vigneti"**: elenco di tutti i vigneti importati, con filari/viti/ettari,
   varietà principali, ricerca per nome, e possibilità di accendere/spegnere la

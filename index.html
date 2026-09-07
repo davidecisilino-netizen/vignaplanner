@@ -255,15 +255,71 @@ const LS_KEY = 'vpm_vigneti_v1';
 const LS_VIS_KEY = 'vpm_visibili_v1';
 const LS_LBL_KEY = 'vpm_mostra_etichette_v1';
 const LS_LBLVAR_KEY = 'vpm_mostra_etichette_varieta_v1';
+const LS_SIM_KEY = 'vpm_simboli_sist_v1'; // simboli mappa per sistema di allevamento (vedi DB Allevamento nel desktop)
 
 let vigneti = [];          // array grezzo caricato dal JSON (uno o più vigneti)
 let vignetiCalc = [];      // stessi vigneti + geometria calcolata (filari/piante/pali) e layer leaflet
 let visibili = {};         // id -> bool, quali vigneti mostrare in mappa
 let mostraEtichette = true; // mostra/nasconde le etichette numero-filare (F1, F2...) in mappa
 let mostraEtichetteVarieta = false; // mostra/nasconde le etichette filare+varietà (F1 Merlot / F2 Misto / F3 Ampelo)
+let sistemiAllevamentoSimboli = {}; // nome sistema -> id forma, importato dal desktop (DB Allevamento)
 let map, gpsMarker, gpsCircle, watchId = null, followGps = false;
 let currentTab = 'vigneti';
 let tileLayers = {}, currentTileKey = 'osm';
+
+// Restituisce il simbolo mappa assegnato a un sistema di allevamento (vedi DB Allevamento nel
+// planner desktop); se il file importato non ha ancora questa informazione (vecchio formato)
+// o il sistema non è mappato, ricade sul cerchio classico.
+function getSistSymbol(nome){
+  return (nome && sistemiAllevamentoSimboli[nome]) || 'cerchio';
+}
+// Genera il markup SVG di un simbolo vite (stessa libreria di forme del planner desktop, vedi
+// disegnaFormaCanvas/svgFormaVite in VignaPlanner) per i marker Leaflet, dove L.circleMarker
+// può disegnare solo cerchi.
+function svgFormaVite(forma,colore,size){
+  const c=size/2,r=size*0.42;
+  const stroke=`stroke="#fff" stroke-width="1.2"`;
+  let inner='';
+  switch(forma){
+    case 'quadrato':
+      inner=`<rect x="${c-r*0.85}" y="${c-r*0.85}" width="${r*1.7}" height="${r*1.7}" fill="${colore}" ${stroke}/>`;
+      break;
+    case 'rombo':
+      inner=`<polygon points="${c},${c-r*1.15} ${c+r*1.15},${c} ${c},${c+r*1.15} ${c-r*1.15},${c}" fill="${colore}" ${stroke}/>`;
+      break;
+    case 'triangolo':
+      inner=`<polygon points="${c},${c-r*1.15} ${c+r},${c+r*0.85} ${c-r},${c+r*0.85}" fill="${colore}" ${stroke}/>`;
+      break;
+    case 'triangoloGiu':
+      inner=`<polygon points="${c},${c+r*1.15} ${c+r},${c-r*0.85} ${c-r},${c-r*0.85}" fill="${colore}" ${stroke}/>`;
+      break;
+    case 'stella':{
+      const pts=[];const punte=5,rE=r*1.2,rI=r*0.5;
+      for(let i=0;i<punte*2;i++){const ang=(Math.PI/punte)*i-Math.PI/2;const rr=i%2===0?rE:rI;pts.push(`${c+Math.cos(ang)*rr},${c+Math.sin(ang)*rr}`);}
+      inner=`<polygon points="${pts.join(' ')}" fill="${colore}" ${stroke}/>`;
+      break;
+    }
+    case 'esagono':{
+      const pts=[];for(let i=0;i<6;i++){const ang=(Math.PI/3)*i-Math.PI/2;pts.push(`${c+Math.cos(ang)*r*1.1},${c+Math.sin(ang)*r*1.1}`);}
+      inner=`<polygon points="${pts.join(' ')}" fill="${colore}" ${stroke}/>`;
+      break;
+    }
+    case 'croce':{
+      const b=r*0.5;
+      inner=`<rect x="${c-b}" y="${c-r*1.1}" width="${b*2}" height="${r*2.2}" fill="${colore}" ${stroke}/><rect x="${c-r*1.1}" y="${c-b}" width="${r*2.2}" height="${b*2}" fill="${colore}" ${stroke}/>`;
+      break;
+    }
+    default:
+      inner=`<circle cx="${c}" cy="${c}" r="${r}" fill="${colore}" ${stroke}/>`;
+  }
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+}
+// Crea un marker Leaflet non-cerchio (icon divIcon con l'SVG sopra); per il cerchio si continua
+// a usare L.circleMarker nativo, più leggero ed è di gran lunga il caso più comune.
+function creaMarkerVite(ll,forma,colore,sizePx){
+  if(!forma||forma==='cerchio') return L.circleMarker(ll,{radius:sizePx/2,fillColor:colore,fillOpacity:.9,color:'#fff',weight:1});
+  return L.marker(ll,{icon:L.divIcon({className:'',html:svgFormaVite(forma,colore,sizePx),iconSize:[sizePx,sizePx],iconAnchor:[sizePx/2,sizePx/2]})});
+}
 
 // ---------- utilità UI ----------
 function toast(msg, ms){
@@ -400,12 +456,16 @@ function caricaLocale(){
     const rawLV = localStorage.getItem(LS_LBLVAR_KEY);
     if(rawLV!=null) mostraEtichetteVarieta = JSON.parse(rawLV);
   }catch(e){ mostraEtichetteVarieta = false; }
+  try{
+    const rawS = localStorage.getItem(LS_SIM_KEY);
+    if(rawS) sistemiAllevamentoSimboli = JSON.parse(rawS);
+  }catch(e){ sistemiAllevamentoSimboli = {}; }
 }
 
 function importaJson(data){
   let arr;
-  if(Array.isArray(data)) arr = data;                    // esportaTuttiVigneti(): array di vigneti
-  else if(Array.isArray(data.vigneti)) arr = data.vigneti; // eventuale backup completo (vp31)
+  if(Array.isArray(data)) arr = data;                    // esportaTuttiVigneti() vecchio formato: array di vigneti
+  else if(Array.isArray(data.vigneti)) arr = data.vigneti; // formato attuale {vigneti, sistemiAllevamentoSimboli} o backup completo (vp31)
   else if(data.nome && (data.filari||data.mapPos)) arr = [data]; // singolo vigneto
   else { toast('⚠ File non riconosciuto: usa "↓ Esporta JSON" dalla scheda Vigneti'); return; }
 
@@ -414,6 +474,12 @@ function importaJson(data){
   vigneti = arr;
   visibili = {};
   arr.forEach((v,i)=>{ visibili[uidVigneto(v,i)] = true; });
+  // Simboli mappa per sistema di allevamento (DB Allevamento del desktop): se il file li
+  // contiene li aggiorna, altrimenti restano quelli già salvati da un import precedente.
+  if(data.sistemiAllevamentoSimboli){
+    sistemiAllevamentoSimboli = data.sistemiAllevamentoSimboli;
+    try{ localStorage.setItem(LS_SIM_KEY, JSON.stringify(sistemiAllevamentoSimboli)); }catch(e){}
+  }
   salvaVigneti();
   salvaVisibilita();
   ricalcolaTutto();
@@ -531,9 +597,8 @@ function costruisciLayerVigneto(vc){
 
     r.piante.forEach(pl=>{
       const v = getV(pl.p.varietaId);
-      const marker = L.circleMarker(pl.ll, {
-        radius:5, fillColor: v?v.color:'#888', fillOpacity:.9, color:'#fff', weight:1
-      });
+      const sistEff = pl.p.sistAllevamento || r.f.sistAllevamento || vc.v.meta?.sistPot || '';
+      const marker = creaMarkerVite(pl.ll, getSistSymbol(sistEff), v?v.color:'#888', 10);
       // Anno di impianto: se la vite ha un anno personalizzato (reimpianto) prevale su
       // quello del filare, che a sua volta prevale sul default del vigneto — stessa
       // logica "a cascata" usata nel planner desktop.
@@ -547,7 +612,7 @@ function costruisciLayerVigneto(vc){
         `<div class="pp-row"><span class="pp-lbl">Vigneto</span><b>${vc.v.nome||'—'}</b></div>`+
         `<div class="pp-row"><span class="pp-lbl">Filare</span><b>F${r.numero}</b></div>`+
         `<div class="pp-row"><span class="pp-lbl">Vite</span><b>N.${pl.numero}</b></div>`+
-        `<div class="pp-row"><span class="pp-lbl">Sistema allevamento</span><b>${pl.p.sistAllevamento || r.f.sistAllevamento || vc.v.meta?.sistPot || '—'}</b></div>`+
+        `<div class="pp-row"><span class="pp-lbl">Sistema allevamento</span><b>${sistEff || '—'}</b></div>`+
         (annoEff!=null?`<div class="pp-row"><span class="pp-lbl">Anno impianto</span><b>${annoEff}${reimpianto?' (reimpianto)':''}</b></div>`:'')+
         (pl.p.portainnesto?`<div class="pp-row"><span class="pp-lbl">Portainnesto</span><b>${pl.p.portainnesto}</b></div>`:'')+
         (pl.p.clone && pl.p.clone!=='—' ?`<div class="pp-row"><span class="pp-lbl">Clone</span><b>${pl.p.clone}</b></div>`:'')
