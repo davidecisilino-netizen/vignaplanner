@@ -273,53 +273,61 @@ let tileLayers = {}, currentTileKey = 'osm';
 function getSistSymbol(nome){
   return (nome && sistemiAllevamentoSimboli[nome]) || 'cerchio';
 }
-// ══ SIMBOLI VITE: poligoni vettoriali Leaflet, non icone DOM ══
-// Prima release: le forme diverse dal cerchio erano rese come icone HTML (divIcon), un
-// elemento DOM completo per OGNI vite. Con vigneti da migliaia di viti questo (a) appesantisce
-// enormemente il caricamento/rendering sui telefoni (blocchi/freeze segnalati), e (b) fa vivere
-// quelle viti in un pannello Leaflet diverso (markerPane) rispetto a pali/filari/viti-cerchio
-// (overlayPane, il renderer canvas nativo impostato con preferCanvas:true), perciò Leaflet le
-// riposizionava in modo leggermente diverso durante zoom/rotazione: da qui lo "sganciamento"
-// visivo e — nei casi più gravi, col rendering bloccato a metà — la sensazione di viti senza
-// geolocalizzazione. Soluzione: costruire le forme come L.polygon (piccoli poligoni regolari,
-// con un raggio di pochi centimetri reali) invece che come icone. Un L.polygon è disegnato
-// dallo STESSO renderer canvas di pali/filari/cerchi — Leaflet lo riproietta e ridisegna da sé
-// in modo nativo a ogni pan/zoom/rotazione, esattamente come già avviene per loro, senza alcun
-// codice aggiuntivo lato app (nessun listener, nessun ricalcolo manuale). Restano quindi sempre
-// nella stessa identica posizione geografica e nello stesso pannello di tutto il resto.
-const RAGGIO_VITE_M = 0.17; // "raggio" approssimativo, in metri, dei simboli non circolari
+// ══ SIMBOLI VITE: poligoni vettoriali Leaflet a dimensione FISSA in pixel ══
+// Tentativo precedente: poligoni con vertici a un piccolo raggio "reale" (~17cm) in modo che
+// Leaflet li riproiettasse da sé come qualsiasi geometria geografica. Risultato: a un raggio
+// di 17cm, ai livelli di zoom normalmente usati passeggiando in vigna (18-20), il poligono
+// occupa MENO DI UN PIXEL sullo schermo — sostanzialmente invisibile. Il cerchio invece è un
+// L.circleMarker con raggio fisso in PIXEL (5px sempre, a qualunque zoom), quindi ben visibile:
+// da qui "si vedono solo i cerchi, non i rombi".
+// Soluzione corretta: mantenere anche i poligoni a dimensione fissa in PIXEL come il cerchio,
+// ricalcolandone i vertici (pochi conti trigonometrici, nessuna ricostruzione della geometria
+// pesante) ogni volta che lo zoom cambia — esattamente come già si fa per le etichette dei
+// filari (vedi pianificaAggiornaEtichette in initMap). Restano comunque veri layer vettoriali
+// Leaflet, disegnati dallo stesso renderer canvas di pali/filari/cerchi (nessuna icona DOM),
+// quindi sempre nello stesso pannello e mai "sganciati" durante pan/rotazione.
+const _formeViteReg = []; // {poly, ll, forma, r} — tutte le viti non-cerchio attualmente costruite, per il ricalcolo su zoom (vedi aggiornaFormeVite)
 
-// Converte un offset in metri (dxE=verso est, dyN=verso nord) rispetto a un punto lat/lng in
-// un nuovo punto lat/lng — approssimazione a piano tangente locale, più che sufficiente sulla
-// scala di pochi centimetri di un simbolo vite.
-function offsetMetriLatLng(lat,lng,dxE,dyN){
-  return [lat + dyN/111320, lng + dxE/(111320*Math.cos(lat*Math.PI/180))];
-}
-// Vertici (offset in metri dal centro, [dxE,dyN]) dei poligoni regolari usati per ogni forma;
-// null per il cerchio, che non è un poligono ma un L.circleMarker nativo.
-function verticiFormaMetri(forma,rM){
-  const pt=(ang,rr)=>[Math.cos(ang)*rr, Math.sin(ang)*rr]; // ang=0→est, ang=90°→nord
+// Offset in pixel (dx,dy — convenzione schermo, y verso il basso) dei vertici del poligono
+// regolare di ciascuna forma; null per il cerchio, che non è un poligono ma un L.circleMarker.
+function verticiFormaPixel(forma,r){
   switch(forma){
-    case 'quadrato': return [pt(Math.PI/4,rM*1.2),pt(3*Math.PI/4,rM*1.2),pt(5*Math.PI/4,rM*1.2),pt(7*Math.PI/4,rM*1.2)];
-    case 'rombo': return [pt(Math.PI/2,rM*1.15),pt(0,rM*1.15),pt(-Math.PI/2,rM*1.15),pt(Math.PI,rM*1.15)];
-    case 'triangolo': return [pt(Math.PI/2,rM*1.2),pt(Math.PI/2+2*Math.PI/3,rM*1.2),pt(Math.PI/2+4*Math.PI/3,rM*1.2)];
-    case 'triangoloGiu': return [pt(-Math.PI/2,rM*1.2),pt(-Math.PI/2+2*Math.PI/3,rM*1.2),pt(-Math.PI/2+4*Math.PI/3,rM*1.2)];
-    case 'stella': { const p=[]; for(let i=0;i<10;i++){ const ang=Math.PI/2+(Math.PI/5)*i; p.push(pt(ang, i%2===0?rM*1.25:rM*0.5)); } return p; }
-    case 'esagono': { const p=[]; for(let i=0;i<6;i++) p.push(pt(Math.PI/2+(Math.PI/3)*i, rM*1.15)); return p; }
-    case 'croce': { const b=rM*0.5, L=rM*1.15;
+    case 'quadrato': return [[-r*.85,-r*.85],[r*.85,-r*.85],[r*.85,r*.85],[-r*.85,r*.85]];
+    case 'rombo': return [[0,-r*1.15],[r*1.15,0],[0,r*1.15],[-r*1.15,0]];
+    case 'triangolo': return [[0,-r*1.15],[r,r*.85],[-r,r*.85]];
+    case 'triangoloGiu': return [[0,r*1.15],[r,-r*.85],[-r,-r*.85]];
+    case 'stella': { const p=[]; const punte=5,rE=r*1.25,rI=r*0.5;
+      for(let i=0;i<punte*2;i++){ const ang=(Math.PI/punte)*i-Math.PI/2; const rr=i%2===0?rE:rI; p.push([Math.cos(ang)*rr,Math.sin(ang)*rr]); } return p; }
+    case 'esagono': { const p=[]; for(let i=0;i<6;i++){ const ang=(Math.PI/3)*i-Math.PI/2; p.push([Math.cos(ang)*r*1.15,Math.sin(ang)*r*1.15]); } return p; }
+    case 'croce': { const b=r*0.5, L=r*1.15;
       return [[-b,-L],[b,-L],[b,-b],[L,-b],[L,b],[b,b],[b,L],[-b,L],[-b,b],[-L,b],[-L,-b],[-b,-b]]; }
     default: return null; // cerchio
   }
 }
-// Crea il marker di una vite: L.circleMarker per il cerchio (come da sempre), L.polygon per
-// le altre forme — entrambi vettoriali, canvas-rendered, stesso pannello di pali e filari.
-function creaMarkerVite(ll,forma,colore,sizePxCerchio){
-  if(!forma || forma==='cerchio'){
-    return L.circleMarker(ll,{radius:sizePxCerchio/2, fillColor:colore, fillOpacity:.92, color:'#fff', weight:1});
-  }
-  const verts = verticiFormaMetri(forma,RAGGIO_VITE_M).map(([dxE,dyN])=>offsetMetriLatLng(ll[0],ll[1],dxE,dyN));
-  return L.polygon(verts,{fillColor:colore, fillOpacity:.92, color:'#fff', weight:1});
+// Converte gli offset in pixel della forma, centrati su ll, in coordinate lat/lng correnti
+// (dipende dallo zoom attuale della mappa: ecco perché va richiamata ad ogni zoomend).
+function poligonoLatLngsPixel(ll,forma,r){
+  const c = map.latLngToContainerPoint(ll);
+  return verticiFormaPixel(forma,r).map(([dx,dy])=>map.containerPointToLatLng([c.x+dx,c.y+dy]));
 }
+// Crea il marker di una vite: L.circleMarker per il cerchio (come da sempre), L.polygon per
+// le altre forme — entrambi vettoriali, canvas-rendered, stesso pannello di pali e filari,
+// entrambi a dimensione fissa in pixel indipendente dallo zoom.
+function creaMarkerVite(ll,forma,colore,sizePx){
+  const r = sizePx/2;
+  if(!forma || forma==='cerchio'){
+    return L.circleMarker(ll,{radius:r, fillColor:colore, fillOpacity:.92, color:'#fff', weight:1});
+  }
+  const poly = L.polygon(poligonoLatLngsPixel(ll,forma,r),{fillColor:colore, fillOpacity:.92, color:'#fff', weight:1});
+  _formeViteReg.push({poly,ll,forma,r});
+  return poly;
+}
+// Richiamata una sola volta a fine zoom (mai durante il gesto): ricalcola solo i vertici dei
+// poligoni già esistenti, un conto economico che non tocca filari/pali/etichette.
+function aggiornaFormeVite(){
+  _formeViteReg.forEach(e=>{ e.poly.setLatLngs(poligonoLatLngsPixel(e.ll,e.forma,e.r)); });
+}
+
 
 // ---------- utilità UI ----------
 function toast(msg, ms){
@@ -551,6 +559,11 @@ function initMap(){
   }
   map.on('zoomend', pianificaAggiornaEtichette);
   map.on('rotate', pianificaAggiornaEtichette);
+  // Le forme non-cerchio (rombo, quadrato...) sono poligoni a dimensione fissa in PIXEL:
+  // il loro "raggio" va ricalcolato a ogni cambio di zoom (mai durante la rotazione, che non
+  // cambia la scala) — vedi aggiornaFormeVite. Costo trascurabile: solo trigonometria, nessun
+  // accesso al DOM e nessun tocco alla geometria pesante di filari/pali.
+  map.on('zoomend', aggiornaFormeVite);
   aggiornaBussola();
 }
 
@@ -665,6 +678,7 @@ function disegnaStruttura(){
 // visibilità — altrimenti si perderebbe il vantaggio della cache appena descritta.
 function svuotaCacheStruttura(){
   if(masterStruttura) masterStruttura.clearLayers();
+  _formeViteReg.length = 0; // le viti a forma poligonale del dataset precedente non esistono più
 }
 
 // Solo le etichette dei filari: layer leggero, separato apposta da quello di viti/pali/filari
