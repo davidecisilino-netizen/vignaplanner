@@ -46,8 +46,6 @@ body{
 
 .leaflet-popup-content-wrapper{background:var(--panel); color:var(--text); border-radius:10px;}
 .leaflet-popup-tip{background:var(--panel);}
-.vpm-vite-icon{background:transparent;border:none;cursor:pointer;}
-.vpm-vite-icon svg{display:block;}
 .leaflet-popup-content{margin:10px 12px; font-size:13px; line-height:1.5;}
 .leaflet-control-attribution{font-size:9px; background:rgba(14,20,16,.7)!important; color:#9c9!important;}
 .leaflet-control-attribution a{color:#bcd!important;}
@@ -275,59 +273,52 @@ let tileLayers = {}, currentTileKey = 'osm';
 function getSistSymbol(nome){
   return (nome && sistemiAllevamentoSimboli[nome]) || 'cerchio';
 }
-// Genera il markup SVG di un simbolo vite (stessa libreria di forme del planner desktop, vedi
-// disegnaFormaCanvas/svgFormaVite in VignaPlanner) per i marker Leaflet, dove L.circleMarker
-// può disegnare solo cerchi.
-function svgFormaVite(forma,colore,size){
-  const c=size/2,r=size*0.42;
-  const stroke=`stroke="#fff" stroke-width="1.2"`;
-  let inner='';
-  switch(forma){
-    case 'quadrato':
-      inner=`<rect x="${c-r*0.85}" y="${c-r*0.85}" width="${r*1.7}" height="${r*1.7}" fill="${colore}" ${stroke}/>`;
-      break;
-    case 'rombo':
-      inner=`<polygon points="${c},${c-r*1.15} ${c+r*1.15},${c} ${c},${c+r*1.15} ${c-r*1.15},${c}" fill="${colore}" ${stroke}/>`;
-      break;
-    case 'triangolo':
-      inner=`<polygon points="${c},${c-r*1.15} ${c+r},${c+r*0.85} ${c-r},${c+r*0.85}" fill="${colore}" ${stroke}/>`;
-      break;
-    case 'triangoloGiu':
-      inner=`<polygon points="${c},${c+r*1.15} ${c+r},${c-r*0.85} ${c-r},${c-r*0.85}" fill="${colore}" ${stroke}/>`;
-      break;
-    case 'stella':{
-      const pts=[];const punte=5,rE=r*1.2,rI=r*0.5;
-      for(let i=0;i<punte*2;i++){const ang=(Math.PI/punte)*i-Math.PI/2;const rr=i%2===0?rE:rI;pts.push(`${c+Math.cos(ang)*rr},${c+Math.sin(ang)*rr}`);}
-      inner=`<polygon points="${pts.join(' ')}" fill="${colore}" ${stroke}/>`;
-      break;
-    }
-    case 'esagono':{
-      const pts=[];for(let i=0;i<6;i++){const ang=(Math.PI/3)*i-Math.PI/2;pts.push(`${c+Math.cos(ang)*r*1.1},${c+Math.sin(ang)*r*1.1}`);}
-      inner=`<polygon points="${pts.join(' ')}" fill="${colore}" ${stroke}/>`;
-      break;
-    }
-    case 'croce':{
-      const b=r*0.5;
-      inner=`<rect x="${c-b}" y="${c-r*1.1}" width="${b*2}" height="${r*2.2}" fill="${colore}" ${stroke}/><rect x="${c-r*1.1}" y="${c-b}" width="${r*2.2}" height="${b*2}" fill="${colore}" ${stroke}/>`;
-      break;
-    }
-    default:
-      inner=`<circle cx="${c}" cy="${c}" r="${r}" fill="${colore}" ${stroke}/>`;
-  }
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+// ══ SIMBOLI VITE: poligoni vettoriali Leaflet, non icone DOM ══
+// Prima release: le forme diverse dal cerchio erano rese come icone HTML (divIcon), un
+// elemento DOM completo per OGNI vite. Con vigneti da migliaia di viti questo (a) appesantisce
+// enormemente il caricamento/rendering sui telefoni (blocchi/freeze segnalati), e (b) fa vivere
+// quelle viti in un pannello Leaflet diverso (markerPane) rispetto a pali/filari/viti-cerchio
+// (overlayPane, il renderer canvas nativo impostato con preferCanvas:true), perciò Leaflet le
+// riposizionava in modo leggermente diverso durante zoom/rotazione: da qui lo "sganciamento"
+// visivo e — nei casi più gravi, col rendering bloccato a metà — la sensazione di viti senza
+// geolocalizzazione. Soluzione: costruire le forme come L.polygon (piccoli poligoni regolari,
+// con un raggio di pochi centimetri reali) invece che come icone. Un L.polygon è disegnato
+// dallo STESSO renderer canvas di pali/filari/cerchi — Leaflet lo riproietta e ridisegna da sé
+// in modo nativo a ogni pan/zoom/rotazione, esattamente come già avviene per loro, senza alcun
+// codice aggiuntivo lato app (nessun listener, nessun ricalcolo manuale). Restano quindi sempre
+// nella stessa identica posizione geografica e nello stesso pannello di tutto il resto.
+const RAGGIO_VITE_M = 0.17; // "raggio" approssimativo, in metri, dei simboli non circolari
+
+// Converte un offset in metri (dxE=verso est, dyN=verso nord) rispetto a un punto lat/lng in
+// un nuovo punto lat/lng — approssimazione a piano tangente locale, più che sufficiente sulla
+// scala di pochi centimetri di un simbolo vite.
+function offsetMetriLatLng(lat,lng,dxE,dyN){
+  return [lat + dyN/111320, lng + dxE/(111320*Math.cos(lat*Math.PI/180))];
 }
-// Crea il marker di una vite come icona SVG (divIcon) — usato per TUTTE le forme, cerchio
-// incluso: prima il cerchio usava L.circleMarker (che vive nel pannello SVG "overlayPane"
-// insieme a pali e filari) mentre le altre forme erano divIcon nel pannello "markerPane",
-// sopra di esso e con uno z-index diverso — da qui la sensazione di elemento "staccato" dal
-// resto della mappa, più evidente durante lo zoom. Usando sempre lo stesso tipo di marker,
-// nello stesso pannello (forziamo pane:'overlayPane', lo stesso di pali/filari), viti di
-// qualsiasi forma restano visivamente ancorate al resto del disegno in ogni condizione.
-function creaMarkerVite(ll,forma,colore,sizePx){
-  return L.marker(ll,{
-    icon:L.divIcon({className:'vpm-vite-icon',html:svgFormaVite(forma,colore,sizePx),iconSize:[sizePx,sizePx],iconAnchor:[sizePx/2,sizePx/2]}),
-    pane:'overlayPane'
-  });
+// Vertici (offset in metri dal centro, [dxE,dyN]) dei poligoni regolari usati per ogni forma;
+// null per il cerchio, che non è un poligono ma un L.circleMarker nativo.
+function verticiFormaMetri(forma,rM){
+  const pt=(ang,rr)=>[Math.cos(ang)*rr, Math.sin(ang)*rr]; // ang=0→est, ang=90°→nord
+  switch(forma){
+    case 'quadrato': return [pt(Math.PI/4,rM*1.2),pt(3*Math.PI/4,rM*1.2),pt(5*Math.PI/4,rM*1.2),pt(7*Math.PI/4,rM*1.2)];
+    case 'rombo': return [pt(Math.PI/2,rM*1.15),pt(0,rM*1.15),pt(-Math.PI/2,rM*1.15),pt(Math.PI,rM*1.15)];
+    case 'triangolo': return [pt(Math.PI/2,rM*1.2),pt(Math.PI/2+2*Math.PI/3,rM*1.2),pt(Math.PI/2+4*Math.PI/3,rM*1.2)];
+    case 'triangoloGiu': return [pt(-Math.PI/2,rM*1.2),pt(-Math.PI/2+2*Math.PI/3,rM*1.2),pt(-Math.PI/2+4*Math.PI/3,rM*1.2)];
+    case 'stella': { const p=[]; for(let i=0;i<10;i++){ const ang=Math.PI/2+(Math.PI/5)*i; p.push(pt(ang, i%2===0?rM*1.25:rM*0.5)); } return p; }
+    case 'esagono': { const p=[]; for(let i=0;i<6;i++) p.push(pt(Math.PI/2+(Math.PI/3)*i, rM*1.15)); return p; }
+    case 'croce': { const b=rM*0.5, L=rM*1.15;
+      return [[-b,-L],[b,-L],[b,-b],[L,-b],[L,b],[b,b],[b,L],[-b,L],[-b,b],[-L,b],[-L,-b],[-b,-b]]; }
+    default: return null; // cerchio
+  }
+}
+// Crea il marker di una vite: L.circleMarker per il cerchio (come da sempre), L.polygon per
+// le altre forme — entrambi vettoriali, canvas-rendered, stesso pannello di pali e filari.
+function creaMarkerVite(ll,forma,colore,sizePxCerchio){
+  if(!forma || forma==='cerchio'){
+    return L.circleMarker(ll,{radius:sizePxCerchio/2, fillColor:colore, fillOpacity:.92, color:'#fff', weight:1});
+  }
+  const verts = verticiFormaMetri(forma,RAGGIO_VITE_M).map(([dxE,dyN])=>offsetMetriLatLng(ll[0],ll[1],dxE,dyN));
+  return L.polygon(verts,{fillColor:colore, fillOpacity:.92, color:'#fff', weight:1});
 }
 
 // ---------- utilità UI ----------
