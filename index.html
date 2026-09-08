@@ -46,6 +46,8 @@ body{
 
 .leaflet-popup-content-wrapper{background:var(--panel); color:var(--text); border-radius:10px;}
 .leaflet-popup-tip{background:var(--panel);}
+.vpm-vite-icon{background:transparent;border:none;cursor:pointer;}
+.vpm-vite-icon svg{display:block;}
 .leaflet-popup-content{margin:10px 12px; font-size:13px; line-height:1.5;}
 .leaflet-control-attribution{font-size:9px; background:rgba(14,20,16,.7)!important; color:#9c9!important;}
 .leaflet-control-attribution a{color:#bcd!important;}
@@ -314,11 +316,18 @@ function svgFormaVite(forma,colore,size){
   }
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
 }
-// Crea un marker Leaflet non-cerchio (icon divIcon con l'SVG sopra); per il cerchio si continua
-// a usare L.circleMarker nativo, più leggero ed è di gran lunga il caso più comune.
+// Crea il marker di una vite come icona SVG (divIcon) — usato per TUTTE le forme, cerchio
+// incluso: prima il cerchio usava L.circleMarker (che vive nel pannello SVG "overlayPane"
+// insieme a pali e filari) mentre le altre forme erano divIcon nel pannello "markerPane",
+// sopra di esso e con uno z-index diverso — da qui la sensazione di elemento "staccato" dal
+// resto della mappa, più evidente durante lo zoom. Usando sempre lo stesso tipo di marker,
+// nello stesso pannello (forziamo pane:'overlayPane', lo stesso di pali/filari), viti di
+// qualsiasi forma restano visivamente ancorate al resto del disegno in ogni condizione.
 function creaMarkerVite(ll,forma,colore,sizePx){
-  if(!forma||forma==='cerchio') return L.circleMarker(ll,{radius:sizePx/2,fillColor:colore,fillOpacity:.9,color:'#fff',weight:1});
-  return L.marker(ll,{icon:L.divIcon({className:'',html:svgFormaVite(forma,colore,sizePx),iconSize:[sizePx,sizePx],iconAnchor:[sizePx/2,sizePx/2]})});
+  return L.marker(ll,{
+    icon:L.divIcon({className:'vpm-vite-icon',html:svgFormaVite(forma,colore,sizePx),iconSize:[sizePx,sizePx],iconAnchor:[sizePx/2,sizePx/2]}),
+    pane:'overlayPane'
+  });
 }
 
 // ---------- utilità UI ----------
