@@ -594,8 +594,8 @@ function toggleTiles(){
 let masterStruttura = null;  // contenitore sempre presente in mappa: raccoglie i layer dei singoli vigneti visibili
 let layerEtichette = null;   // solo le etichette dei filari: leggero, ricostruito anche ad ogni zoom/rotazione (vedi pianificaAggiornaEtichette)
 const LABEL_H = 20;        // altezza approssimativa (px) di un'etichetta filare, usata per calcolare il "passo" (vedi passoEtichette)
-const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare
-const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente)
+const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare, a piena scala (filare ≥80px a schermo — vedi scalaOffset in aggiornaEtichette)
+const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente), a piena scala
 
 // Costruisce il layer (viti, pali, filari, marker di ancoraggio) di UN SOLO vigneto. Viene
 // chiamata una sola volta per vigneto e il risultato resta in cache in vc.layer: accendere e
@@ -710,6 +710,18 @@ function aggiornaEtichette(){
       const len = Math.hypot(dx,dy)||1;
       const outX = -dx/len, outY = -dy/len; // direzione opposta al filare = verso la capezzagna, prima della vite 1
 
+      // BUG "etichette lontane a zoom ridotto": LABEL_D_NUM/VAR sono distanze FISSE in
+      // pixel-schermo (per restare leggibili a qualunque zoom). Ma con zoom molto ridotto
+      // (vista d'insieme) un filare lungo anche 50-100m in campo può proiettarsi in pochi
+      // pixel sullo schermo: applicare comunque i 26-60px fissi fa sembrare l'etichetta
+      // "staccata", molto più lontana del filare stesso — è esattamente il problema
+      // segnalato, che sparisce avvicinandosi con lo zoom perché lì il filare torna a
+      // occupare più pixel della distanza fissa. Soluzione: scalare la distanza in
+      // proporzione alla lunghezza a schermo del filare (len), saturando al valore fisso
+      // pieno non appena il filare supera gli 80px — cioè al normale zoom di lavoro in
+      // campo (z18-20) il comportamento resta quello di sempre, invariato.
+      const scalaOffset = Math.min(1, len/80);
+
       // IMPORTANTE: lo spostamento verso l'esterno non viene applicato con iconAnchor
       // (un meccanismo interno di Leaflet la cui interazione con la rotazione libera della
       // mappa non è affidabile — è la causa dello sfasamento delle etichette osservato a
@@ -725,7 +737,7 @@ function aggiornaEtichette(){
 
       if(mostraEtichette){
         const bw=32, bh=LABEL_H;
-        L.marker(puntoEsterno(LABEL_D_NUM), {
+        L.marker(puntoEsterno(LABEL_D_NUM*scalaOffset), {
           icon: L.divIcon({
             className:'', iconAnchor:[bw/2, bh/2], iconSize:[bw,bh],
             html:`<div style="background:rgba(26,74,26,.94);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);text-align:center">F${r.numero}</div>`
@@ -740,7 +752,7 @@ function aggiornaEtichette(){
         else if(r.f.tipo==='ampelo'){ testoVar='Ampelo'; colVar='#8e5fd1'; }
         else { const v=getV(r.f.varietaId); testoVar = v?v.nome:'—'; colVar = v?v.color:'#888'; }
         const bw2=Math.min(150, Math.max(70, 34+testoVar.length*6.2)), bh2=LABEL_H;
-        L.marker(puntoEsterno(LABEL_D_VAR), {
+        L.marker(puntoEsterno(LABEL_D_VAR*scalaOffset), {
           icon: L.divIcon({
             className:'', iconAnchor:[bw2/2, bh2/2], iconSize:[bw2,bh2],
             html:`<div style="background:rgba(20,26,22,.94);color:#fff;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);display:inline-flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis">`+
