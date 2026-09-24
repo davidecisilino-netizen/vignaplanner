@@ -49,6 +49,7 @@ body{
 #mapWrap{flex:1; position:relative; min-height:0;}
 #map{width:100%; height:100%; background:#0a1a0a;}
 
+#map.vpm-zooming .vpm-lbl{visibility:hidden;}
 .leaflet-popup-content-wrapper{background:var(--panel); color:var(--text); border-radius:10px;}
 .leaflet-popup-tip{background:var(--panel);}
 .leaflet-popup-content{margin:10px 12px; font-size:13px; line-height:1.5;}
@@ -608,8 +609,16 @@ function initMap(){
   let refreshEtichetteTimer = null;
   function pianificaAggiornaEtichette(){
     clearTimeout(refreshEtichetteTimer);
-    refreshEtichetteTimer = setTimeout(()=>{ if(vignetiCalc.length) aggiornaEtichette(); }, 150);
+    refreshEtichetteTimer = setTimeout(()=>{
+      try{ if(vignetiCalc.length) aggiornaEtichette(); }
+      finally{ map.getContainer().classList.remove('vpm-zooming'); }
+    }, 150);
   }
+  // Durante l'animazione di zoom le etichette (punti geografici calcolati con la distanza in pixel
+  // dello zoom PRECEDENTE) si allontanerebbero/avvicinerebbero dal filare in proporzione allo zoom,
+  // per poi "scattare" alla posizione giusta a fine gesto: si nascondono finché non vengono
+  // ricalcolate (vedi timer qui sopra), invece di mostrare quel movimento.
+  map.on('zoomstart', ()=>{ map.getContainer().classList.add('vpm-zooming'); });
   map.on('zoomend', pianificaAggiornaEtichette);
   map.on('rotate', pianificaAggiornaEtichette);
   // Le forme non-cerchio (rombo, quadrato...) sono poligoni a dimensione fissa in PIXEL:
@@ -646,9 +655,51 @@ function toggleTiles(){
 
 let masterStruttura = null;  // contenitore sempre presente in mappa: raccoglie i layer dei singoli vigneti visibili
 let layerEtichette = null;   // solo le etichette dei filari: leggero, ricostruito anche ad ogni zoom/rotazione (vedi pianificaAggiornaEtichette)
-const LABEL_H = 20;        // altezza approssimativa (px) di un'etichetta filare, usata per calcolare il "passo" (vedi passoEtichette)
-const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare
-const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente)
+// ── Posizione e dimensione delle etichette dei filari ──
+// Prima le etichette stavano a una distanza FISSA in pixel dall'inizio del filare (26 px il
+// numero, 60 px la varietà) a qualunque zoom: con lo zoom ridotto, dove un filare è lungo poche
+// decine di pixel, quella distanza è enorme rispetto al filare e le etichette sembravano
+// "staccate" e lontanissime, per poi avvicinarsi (in proporzione) ingrandendo la mappa.
+// Ora le etichette sono sempre ADIACENTI alla prima vite: la distanza è quella minima che evita
+// di coprirla (dipende solo dall'ingombro del simbolo vite e dalla direzione del filare sullo
+// schermo), e la varietà si accoda subito dopo il numero. In più, con lo zoom ridotto le
+// etichette si rimpiccioliscono un po' (mai sotto 9 px di testo) per restare proporzionate.
+const VINE_HALF = 6.5;     // semi-ingombro (px) del simbolo della prima vite (raggio 5 + bordo; le forme a stella arrivano a ~6)
+const LABEL_GAP = 2;       // spazio (px) fra prima vite e primo riquadro, e fra un riquadro e il successivo
+const LABEL_ZOOM_MIN = 14; // a questo zoom (o meno) le etichette hanno la scala minima
+const LABEL_ZOOM_MAX = 18; // da questo zoom in su hanno la scala piena
+const LABEL_SCALE_MIN = 0.78;
+const VAR_LABEL_MAXW = 170; // larghezza massima (px) dell'etichetta con varietà: oltre, il nome viene troncato con "…"
+
+// Scala e misure delle etichette allo zoom dato (le stesse per tutte le etichette, così anche il
+// "passo" anti-sovrapposizione e l'avviso di zoom ridotto usano l'altezza reale).
+function metricheEtichette(zoom){
+  const t = Math.min(1, Math.max(0, (zoom-LABEL_ZOOM_MIN)/(LABEL_ZOOM_MAX-LABEL_ZOOM_MIN)));
+  const k = LABEL_SCALE_MIN + (1-LABEL_SCALE_MIN)*t;
+  const numFs = Math.max(9, 11*k), varFs = Math.max(9, 10.5*k);
+  const numPadH = 6*k, numPadV = 2*k, varPadH = 8*k, varPadV = 3*k;
+  return {
+    k, numFs, varFs, numPadH, varPadH, dot:8*k, gap:5*k,
+    numH: Math.ceil(numFs*1.2 + numPadV*2),
+    varH: Math.ceil(varFs*1.2 + varPadV*2)
+  };
+}
+// Altezza (px) del riquadro più alto fra le etichette attive: serve al calcolo del "passo".
+function altezzaEtichetta(zoom){
+  const m = metricheEtichette(zoom);
+  return Math.max(mostraEtichette?m.numH:0, mostraEtichetteVarieta?m.varH:0) || m.numH;
+}
+// Larghezza reale (px) di un testo, misurata con canvas nello stesso font dell'app: i riquadri
+// hanno così la misura giusta (prima erano stimati: "F100" sforava, i nomi corti lasciavano vuoti).
+let _ctxMisura = null, _fontApp = '';
+function larghezzaTesto(txt, peso, px){
+  if(!_ctxMisura){
+    _ctxMisura = document.createElement('canvas').getContext('2d');
+    _fontApp = getComputedStyle(document.body).fontFamily || 'sans-serif';
+  }
+  _ctxMisura.font = peso+' '+px+'px '+_fontApp;
+  return _ctxMisura.measureText(txt).width;
+}
 
 // Costruisce il layer (viti, pali, filari, marker di ancoraggio) di UN SOLO vigneto. Viene
 // chiamata una sola volta per vigneto e il risultato resta in cache in vc.layer: accendere e
@@ -742,6 +793,7 @@ function aggiornaEtichette(){
   layerEtichette = L.featureGroup();
   if(!mostraEtichette && !mostraEtichetteVarieta){ layerEtichette.addTo(map); return; }
   const zoomCorrente = map.getZoom();
+  const mt = metricheEtichette(zoomCorrente);
 
   vignetiCalc.forEach(vc=>{
     const id = vc._id;
@@ -751,7 +803,7 @@ function aggiornaEtichette(){
     // "Passo": con questo zoom, mostra un'etichetta ogni N filari (N=1 quando lo spazio
     // è sufficiente per etichettarli tutti). Calcolato una sola volta per vigneto perché
     // interFilare è lo stesso per tutti i filari del blocco.
-    const passo = passoEtichette(lat, interFilare, zoomCorrente, LABEL_H);
+    const passo = passoEtichette(lat, interFilare, zoomCorrente, altezzaEtichetta(zoomCorrente));
 
     righe.forEach(r=>{
       if(r.fi % passo !== 0) return;
@@ -776,12 +828,30 @@ function aggiornaEtichette(){
         return map.layerPointToLatLng(L.point(p0.x+outX*distanzaPx, p0.y+outY*distanzaPx));
       }
 
+      // Direzione "verso l'esterno" sullo SCHERMO (le etichette restano sempre orizzontali, anche a
+      // mappa ruotata): serve a sapere quanto è largo il riquadro lungo la direzione del filare.
+      const s0 = map.latLngToContainerPoint(L.latLng(r.fLine[0]));
+      const s1 = map.latLngToContainerPoint(L.latLng(r.fLine[1]));
+      const sl = Math.hypot(s1.x-s0.x, s1.y-s0.y);
+      const sux = sl>0.5 ? -(s1.x-s0.x)/sl : -1, suy = sl>0.5 ? -(s1.y-s0.y)/sl : 0;
+      // "Cursore" lungo il filare verso l'esterno: parte subito oltre la prima vite; ogni riquadro
+      // occupa il tratto pari alla propria estensione proiettata sulla direzione del filare
+      // (|ux|·w/2 + |uy|·h/2), così non copre la vite né il riquadro precedente a qualunque angolo.
+      let cursore = VINE_HALF + LABEL_GAP;
+      function posizionaRiquadro(w, h){
+        const mezza = Math.abs(sux)*w/2 + Math.abs(suy)*h/2;
+        const centro = cursore + mezza;
+        cursore = centro + mezza + LABEL_GAP;
+        return puntoEsterno(centro);
+      }
+
       if(mostraEtichette){
-        const bw=32, bh=LABEL_H;
-        L.marker(puntoEsterno(LABEL_D_NUM), {
+        const testo = 'F'+r.numero;
+        const bw = Math.ceil(larghezzaTesto(testo,700,mt.numFs) + mt.numPadH*2), bh = mt.numH;
+        L.marker(posizionaRiquadro(bw,bh), {
           icon: L.divIcon({
-            className:'', iconAnchor:[bw/2, bh/2], iconSize:[bw,bh],
-            html:`<div style="background:rgba(26,74,26,.94);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);text-align:center">F${r.numero}</div>`
+            className:'vpm-lbl', iconAnchor:[bw/2, bh/2], iconSize:[bw,bh],
+            html:`<div style="box-sizing:border-box;width:${bw}px;height:${bh}px;display:flex;align-items:center;justify-content:center;background:rgba(26,74,26,.94);color:#fff;font-size:${mt.numFs.toFixed(1)}px;font-weight:700;line-height:1;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45)">${testo}</div>`
           }),
           interactive:false, rotateWithView:false
         }).addTo(layerEtichette);
@@ -792,13 +862,14 @@ function aggiornaEtichette(){
         if(r.f.tipo==='mista'){ testoVar='Misto'; colVar='#9e9e9e'; }
         else if(r.f.tipo==='ampelo'){ testoVar='Ampelo'; colVar='#8e5fd1'; }
         else { const v=getV(r.f.varietaId); testoVar = v?v.nome:'—'; colVar = v?v.color:'#888'; }
-        const bw2=Math.min(150, Math.max(70, 34+testoVar.length*6.2)), bh2=LABEL_H;
-        L.marker(puntoEsterno(LABEL_D_VAR), {
+        const wF = larghezzaTesto('F'+r.numero,700,mt.varFs), wT = larghezzaTesto(testoVar,600,mt.varFs);
+        const bw2 = Math.min(VAR_LABEL_MAXW, Math.ceil(mt.varPadH*2 + mt.dot + mt.gap + wF + mt.gap + wT + 2)), bh2 = mt.varH;
+        L.marker(posizionaRiquadro(bw2,bh2), {
           icon: L.divIcon({
-            className:'', iconAnchor:[bw2/2, bh2/2], iconSize:[bw2,bh2],
-            html:`<div style="background:rgba(20,26,22,.94);color:#fff;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);display:inline-flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis">`+
-              `<span style="width:8px;height:8px;border-radius:50%;background:${colVar};flex-shrink:0;border:1px solid rgba(255,255,255,.4)"></span>`+
-              `<b style="font-weight:700">F${r.numero}</b><span style="opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${testoVar}</span></div>`
+            className:'vpm-lbl', iconAnchor:[bw2/2, bh2/2], iconSize:[bw2,bh2],
+            html:`<div style="box-sizing:border-box;width:${bw2}px;height:${bh2}px;display:flex;align-items:center;justify-content:center;gap:${mt.gap.toFixed(1)}px;padding:0 ${mt.varPadH.toFixed(1)}px;background:rgba(20,26,22,.94);color:#fff;font-size:${mt.varFs.toFixed(1)}px;font-weight:600;line-height:1;border-radius:4px;white-space:nowrap;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.45)">`+
+              `<span style="width:${mt.dot.toFixed(1)}px;height:${mt.dot.toFixed(1)}px;border-radius:50%;background:${colVar};flex-shrink:0;border:1px solid rgba(255,255,255,.4)"></span>`+
+              `<b style="font-weight:700;flex-shrink:0">F${r.numero}</b><span style="opacity:.9;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(testoVar)}</span></div>`
           }),
           interactive:false, rotateWithView:false
         }).addTo(layerEtichette);
@@ -931,7 +1002,7 @@ document.getElementById('btnLayers').addEventListener('click', toggleTiles);
 function avvisaSePassoMaggioreDi1(){
   const visibiliCalc = vignetiCalc.filter(vc=>visibili[vc._id]);
   if(!visibiliCalc.length) return;
-  const passoMax = Math.max(...visibiliCalc.map(vc=>passoEtichette(vc.geom.lat, vc.geom.interFilare, map.getZoom(), LABEL_H)));
+  const passoMax = Math.max(...visibiliCalc.map(vc=>passoEtichette(vc.geom.lat, vc.geom.interFilare, map.getZoom(), altezzaEtichetta(map.getZoom()))));
   if(passoMax > 1) toast('Zoom ridotto: mostrata un\'etichetta ogni '+passoMax+' filari — avvicinati per vederle tutte', 3600);
 }
 

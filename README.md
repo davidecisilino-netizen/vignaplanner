@@ -43,6 +43,9 @@ e ricarica il file nell'app: sovrascrive i dati precedenti sul telefono.
   zoomati poco (per avere una visione d'insieme) l'app mostra automaticamente solo un'etichetta
   ogni tot filari, per restare sempre leggibile e senza sovrapposizioni; avvicinandosi con lo
   zoom, le etichette aumentano di numero fino a comparire su ogni singolo filare.
+  Le etichette stanno sempre attaccate alla prima vite del filare (la varietà si accoda al
+  numero, senza sovrapporsi) a qualunque zoom e rotazione della mappa; con lo zoom ridotto si
+  rimpiccioliscono un poco e restano vicine al filare invece di allontanarsi.
 - **Viti** come simboli colorati per varietà (stesso colore usato nel planner) e con la
   **forma** che indica il sistema di allevamento effettivo della vite (cerchio, quadrato,
   rombo, triangolo, stella, esagono, croce — configurabili nel desktop in "DB Allevamento");
