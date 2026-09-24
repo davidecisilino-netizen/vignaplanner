@@ -62,7 +62,17 @@ e ricarica il file nell'app: sovrascrive i dati precedenti sul telefono.
   banchina, altezza totale, cimatura e parete vegetativa risultante — stessa formula del
   planner desktop.
 - **Pannello "🍇 Varietà"**: elenco di tutte le varietà presenti in tutti i vigneti
-  importati, con conteggio viti totale e colore, con ricerca.
+  importati, con conteggio viti totale e colore, con ricerca (sempre visibile in alto mentre
+  si scorre). Ogni varietà è una scheda con bordo colorato che indica:
+  - **Filari interi** (solo quella varietà), compressi in intervalli (es. `F1–F12, F15`) che
+    vanno sempre a capo: anche con centinaia di filari nulla esce più dallo schermo.
+  - **Filari parziali** (condivisi con altre varietà): una barra mostra in quali **interpali**
+    (tratti fra due pali consecutivi, contati dall'inizio filare/vite n.1) la varietà è presente,
+    con il testo (es. "interpali 11–20 su 20") e il numero di viti. I filari con la stessa
+    disposizione sono raggruppati (es. `F61–F64`); se le viti sono alternate ad altre varietà
+    la barra è tratteggiata. Con più di 4 gruppi l'elenco parte chiuso ("tocca per aprire").
+  - Con più vigneti, i filari sono raggruppati per vigneto.
+- **Versione dell'app** in alto accanto al nome (es. `v. 18`), ripetuta nel pannello "Dati".
 - **Pannello "ⓘ Dati"**: totali complessivi (vigneti, filari, viti, ettari), pulsante per
   importare un nuovo file e pulsante per cancellare i dati salvati sul telefono.
 - **Mappa orientabile a piacimento** (🧭 in basso a destra): non è più fissa a nord in alto.
@@ -158,6 +168,10 @@ repository GitHub (stesso "Upload files" di prima, sovrascrivendo `index.html` e
 GitHub Pages ripubblica automaticamente in 1-2 minuti. Chi ha già installato l'app sul
 telefono riceverà l'aggiornamento la prima volta che la riapre con connessione a internet
 (il service worker scarica la nuova versione della shell in background).
+
+**Numero di versione:** a ogni rilascio aggiornare *insieme* `APP_VERSION` in `index.html`
+e `CACHE_NAME` (`vpm-shell-vNN`) in `sw.js`: senza cambiare `CACHE_NAME` i telefoni
+continuerebbero a usare la versione in cache.
 
 ## Prestazioni e stabilità
 

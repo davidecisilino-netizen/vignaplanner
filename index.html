@@ -35,7 +35,12 @@ body{
   display:flex; align-items:center; gap:8px; padding:calc(8px + var(--safe-top)) 10px 8px;
   background:var(--g1); border-bottom:1px solid var(--line); z-index:1000; flex-shrink:0;
 }
-#topbar h1{font-size:15px; margin:0; font-weight:700; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+#topbar h1{font-size:15px; margin:0; font-weight:700; flex:1; min-width:0; display:flex; align-items:center; gap:8px;}
+#topbar h1 .t-name{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+#topbar h1 .t-ver{
+  flex-shrink:0; font-size:11px; font-weight:700; letter-spacing:.3px; color:var(--accent);
+  background:rgba(255,193,7,.12); border:1px solid rgba(255,193,7,.4); padding:1px 8px; border-radius:10px;
+}
 .icon-btn{
   background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:10px;
   width:38px; height:38px; display:flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; flex-shrink:0;
@@ -106,17 +111,19 @@ body{
 /* Bottom sheet: list of vigneti / varieties, legend */
 #sheet{
   position:absolute; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line);
-  border-radius:16px 16px 0 0; z-index:700; max-height:72vh; display:flex; flex-direction:column;
+  border-radius:16px 16px 0 0; z-index:700; max-height:72vh; max-height:80dvh; display:flex; flex-direction:column;
   transform:translateY(100%); transition:transform .25s ease; box-shadow:0 -4px 20px rgba(0,0,0,.4);
 }
 #sheet.open{transform:translateY(0);}
+/* I controlli Leaflet (zoom +/−, attribuzione) hanno z-index 1000 e coprivano il testo del foglio: si nascondono finché è aperto */
+#mapWrap.sheet-open .leaflet-control-container{visibility:hidden;}
 #sheetHandle{width:38px; height:4px; background:var(--line); border-radius:3px; margin:9px auto 4px;}
 #sheetHead{display:flex; align-items:center; gap:8px; padding:2px 14px 8px; border-bottom:1px solid var(--line);}
 #sheetHead h3{font-size:14px; margin:0; flex:1;}
 #sheetTabs{display:flex; gap:6px; padding:8px 12px 0;}
 .tabbtn{flex:1; text-align:center; padding:8px 4px; border-radius:8px; font-size:12.5px; font-weight:600; color:var(--text2); background:var(--panel2); border:1px solid var(--line); cursor:pointer;}
 .tabbtn.active{background:var(--g3); color:#fff; border-color:var(--g3);}
-#sheetBody{overflow-y:auto; padding:10px 14px 16px; flex:1;}
+#sheetBody{overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding:10px 14px calc(16px + var(--safe-bottom)); flex:1; min-height:0;}
 
 .search-box{
   width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:10px;
@@ -151,15 +158,56 @@ body{
 .vig-note{font-size:11px; color:var(--text2); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin-top:8px; overflow-wrap:anywhere;}
 .vtag{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; gap:4px;}
 
-.var-item{display:flex; align-items:flex-start; gap:10px; padding:9px 4px; border-bottom:1px solid var(--line); font-size:13.5px; flex-wrap:wrap;}
-.var-item .vc{width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid rgba(255,255,255,.35); margin-top:2px;}
-.var-item .vi-main{flex:1; min-width:0;}
-.var-item .vn-row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
-.var-item .vn{font-weight:600;}
-.var-item .vcount{color:var(--text2); font-size:12px; white-space:nowrap;}
-.var-filari{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
-.ftag{font-size:10.5px; padding:2px 7px; border-radius:8px; background:var(--bg); border:1px solid var(--line); color:var(--text2); white-space:nowrap;}
+/* ── Scheda Varietà ──
+   Ogni varietà è una card con bordo colorato. I filari NON sono più un unico blocco "nowrap"
+   (che usciva dallo schermo e veniva tagliato): sono chip separati che vanno a capo, e i filari
+   consecutivi sono compressi in intervalli (F1–F12). I filari occupati solo in parte mostrano
+   una barra con gli interpali (spazio fra due pali consecutivi) in cui la varietà è presente. */
+/* top:-10px compensa il padding-top di #sheetBody: la casella di ricerca resta ancorata al bordo superiore */
+.sticky-search{position:sticky; top:-10px; z-index:3; background:var(--panel); margin:-10px -14px 0; padding:10px 14px 8px; box-shadow:0 6px 8px -6px rgba(0,0,0,.45);}
+.sticky-search .search-box{margin-bottom:0;}
+.var-hint{font-size:11.5px; color:var(--text2); line-height:1.45; margin:4px 2px 10px;}
+.var-card{
+  background:var(--panel2); border:1px solid var(--line); border-left:5px solid var(--vcol,#888);
+  border-radius:12px; padding:10px 12px 12px; margin-bottom:10px; min-width:0; overflow:hidden;
+}
+.vc-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
+.vc-name{font-size:15px; font-weight:700; min-width:0; overflow-wrap:anywhere; line-height:1.3;}
+.vc-count{font-size:13px; font-weight:700; color:var(--text); white-space:nowrap; font-variant-numeric:tabular-nums; flex-shrink:0;}
+.vc-count small{font-weight:500; color:var(--text2); font-size:11px;}
+.vc-sum{font-size:11.5px; color:var(--text2); margin-top:2px;}
+.vc-vig{margin-top:10px; padding-top:9px; border-top:1px solid var(--line); min-width:0;}
+.vc-vig:first-child{border-top:none; padding-top:0; margin-top:6px;}
+.vc-vigname{font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; overflow-wrap:anywhere;}
+.vc-grp{margin-top:8px; min-width:0;}
+.vc-lbl{font-size:11px; color:var(--text2); font-weight:600; margin-bottom:5px; display:flex; align-items:center; gap:6px;}
+.vc-lbl .n{background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:0 6px; font-size:10.5px; color:var(--text);}
+.var-filari{display:flex; flex-wrap:wrap; gap:6px; min-width:0;}
+.ftag{
+  font-size:12.5px; line-height:1.25; padding:3px 9px; border-radius:8px; background:var(--bg); border:1px solid var(--line);
+  color:var(--text2); max-width:100%; overflow-wrap:anywhere; font-variant-numeric:tabular-nums;
+}
 .ftag b{color:var(--text); font-weight:700;}
+details.vc-part > summary{
+  list-style:none; cursor:pointer; font-size:11px; color:var(--text2); font-weight:600; margin-bottom:5px;
+  display:flex; align-items:center; gap:6px; padding:3px 0; -webkit-user-select:none; user-select:none;
+}
+details.vc-part > summary::-webkit-details-marker{display:none;}
+details.vc-part > summary::before{content:"▸"; display:inline-block; width:10px; transition:transform .15s; color:var(--accent);}
+details.vc-part[open] > summary::before{transform:rotate(90deg);}
+details.vc-part > summary .n{background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:0 6px; font-size:10.5px; color:var(--text);}
+details.vc-part > summary .tap{margin-left:auto; color:var(--accent); font-weight:500;}
+details.vc-part[open] > summary .tap{display:none;}
+.pr{padding:8px 0 9px; border-top:1px dashed var(--line); min-width:0;}
+.pr:first-child{border-top:none; padding-top:2px;}
+.pr .var-filari .ftag{border-color:var(--g4);}
+.pr-bar{position:relative; height:12px; border-radius:6px; background:var(--bg); border:1px solid var(--line); overflow:hidden; margin-top:8px;}
+.pr-bar i.seg{position:absolute; top:0; bottom:0; background:var(--vcol,#888); box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);}
+.pr-bar.mix i.seg{background:repeating-linear-gradient(135deg, var(--vcol,#888) 0 3px, transparent 3px 6px);}
+.pr-bar i.tk{position:absolute; inset:0; pointer-events:none; background-image:linear-gradient(to right, transparent calc(100% - 1px), rgba(255,255,255,.22) 0);}
+.pr-txt{font-size:12.5px; color:var(--text2); margin-top:5px; line-height:1.4; overflow-wrap:anywhere;}
+.pr-txt b{color:var(--text); font-weight:700;}
+.pr-txt .sub{color:var(--text2); font-size:11.5px; display:block; margin-top:1px;}
 
 #stack-info{font-size:12.5px; color:var(--text2); line-height:1.6;}
 #stack-info b{color:var(--text);}
@@ -194,7 +242,7 @@ input[type=file]{display:none;}
 
 <div id="topbar">
   <button class="icon-btn" id="btnMenu" title="Vigneti e varietà">☰</button>
-  <h1 id="titleTxt">VignaPlanner Campo</h1>
+  <h1 id="titleTxt"><span class="t-name">VignaPlanner Campo</span><span class="t-ver" id="appVer" title="Versione dell'app"></span></h1>
   <button class="icon-btn" id="btnImport" title="Importa JSON dal desktop">⇪</button>
 </div>
 
@@ -250,6 +298,11 @@ input[type=file]{display:none;}
    proiezione geografica reale (stesso algoritmo del planner) di filari,
    viti e pali, per consultarla in campo con il GPS del telefono.
    ========================================================================= */
+
+// Versione dell'app mostrata in alto accanto al nome. AGGIORNARE INSIEME a CACHE_NAME in sw.js
+// (vpm-shell-vNN): il service worker serve l'app dalla cache finché quel nome non cambia.
+const APP_VERSION = 18;
+document.getElementById('appVer').textContent = 'v. '+APP_VERSION;
 
 const LS_KEY = 'vpm_vigneti_v1';
 const LS_VIS_KEY = 'vpm_visibili_v1';
@@ -594,8 +647,8 @@ function toggleTiles(){
 let masterStruttura = null;  // contenitore sempre presente in mappa: raccoglie i layer dei singoli vigneti visibili
 let layerEtichette = null;   // solo le etichette dei filari: leggero, ricostruito anche ad ogni zoom/rotazione (vedi pianificaAggiornaEtichette)
 const LABEL_H = 20;        // altezza approssimativa (px) di un'etichetta filare, usata per calcolare il "passo" (vedi passoEtichette)
-const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare, a piena scala (filare ≥80px a schermo — vedi scalaOffset in aggiornaEtichette)
-const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente), a piena scala
+const LABEL_D_NUM = 26;    // distanza (px) dell'etichetta numero dall'inizio del filare
+const LABEL_D_VAR = 60;    // distanza (px) dell'etichetta filare+varietà dall'inizio del filare (più esterna, non si sovrappone alla precedente)
 
 // Costruisce il layer (viti, pali, filari, marker di ancoraggio) di UN SOLO vigneto. Viene
 // chiamata una sola volta per vigneto e il risultato resta in cache in vc.layer: accendere e
@@ -710,18 +763,6 @@ function aggiornaEtichette(){
       const len = Math.hypot(dx,dy)||1;
       const outX = -dx/len, outY = -dy/len; // direzione opposta al filare = verso la capezzagna, prima della vite 1
 
-      // BUG "etichette lontane a zoom ridotto": LABEL_D_NUM/VAR sono distanze FISSE in
-      // pixel-schermo (per restare leggibili a qualunque zoom). Ma con zoom molto ridotto
-      // (vista d'insieme) un filare lungo anche 50-100m in campo può proiettarsi in pochi
-      // pixel sullo schermo: applicare comunque i 26-60px fissi fa sembrare l'etichetta
-      // "staccata", molto più lontana del filare stesso — è esattamente il problema
-      // segnalato, che sparisce avvicinandosi con lo zoom perché lì il filare torna a
-      // occupare più pixel della distanza fissa. Soluzione: scalare la distanza in
-      // proporzione alla lunghezza a schermo del filare (len), saturando al valore fisso
-      // pieno non appena il filare supera gli 80px — cioè al normale zoom di lavoro in
-      // campo (z18-20) il comportamento resta quello di sempre, invariato.
-      const scalaOffset = Math.min(1, len/80);
-
       // IMPORTANTE: lo spostamento verso l'esterno non viene applicato con iconAnchor
       // (un meccanismo interno di Leaflet la cui interazione con la rotazione libera della
       // mappa non è affidabile — è la causa dello sfasamento delle etichette osservato a
@@ -737,7 +778,7 @@ function aggiornaEtichette(){
 
       if(mostraEtichette){
         const bw=32, bh=LABEL_H;
-        L.marker(puntoEsterno(LABEL_D_NUM*scalaOffset), {
+        L.marker(puntoEsterno(LABEL_D_NUM), {
           icon: L.divIcon({
             className:'', iconAnchor:[bw/2, bh/2], iconSize:[bw,bh],
             html:`<div style="background:rgba(26,74,26,.94);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);text-align:center">F${r.numero}</div>`
@@ -752,7 +793,7 @@ function aggiornaEtichette(){
         else if(r.f.tipo==='ampelo'){ testoVar='Ampelo'; colVar='#8e5fd1'; }
         else { const v=getV(r.f.varietaId); testoVar = v?v.nome:'—'; colVar = v?v.color:'#888'; }
         const bw2=Math.min(150, Math.max(70, 34+testoVar.length*6.2)), bh2=LABEL_H;
-        L.marker(puntoEsterno(LABEL_D_VAR*scalaOffset), {
+        L.marker(puntoEsterno(LABEL_D_VAR), {
           icon: L.divIcon({
             className:'', iconAnchor:[bw2/2, bh2/2], iconSize:[bw2,bh2],
             html:`<div style="background:rgba(20,26,22,.94);color:#fff;font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);display:inline-flex;align-items:center;gap:5px;overflow:hidden;text-overflow:ellipsis">`+
@@ -920,8 +961,8 @@ fileInput.addEventListener('change', e=>gestisciFile(e.target.files[0]));
 // ---------- bottom sheet ----------
 const sheet = document.getElementById('sheet');
 const scrim = document.getElementById('sheetScrim');
-function openSheet(){ sheet.classList.add('open'); scrim.classList.add('show'); }
-function closeSheet(){ sheet.classList.remove('open'); scrim.classList.remove('show'); }
+function openSheet(){ sheet.classList.add('open'); scrim.classList.add('show'); document.getElementById('mapWrap').classList.add('sheet-open'); }
+function closeSheet(){ sheet.classList.remove('open'); scrim.classList.remove('show'); document.getElementById('mapWrap').classList.remove('sheet-open'); }
 document.getElementById('btnMenu').addEventListener('click', openSheet);
 document.getElementById('btnCloseSheet').addEventListener('click', closeSheet);
 scrim.addEventListener('click', closeSheet);
@@ -1067,25 +1108,57 @@ function renderVigList(){
 
 // Per ogni varietà, individua in quali filari (di quale vigneto) compare, scandendo le
 // piante di ogni filare — funziona sia per filari mono-varietà sia misti/ampelografici.
+//
+// Per i filari NON interamente occupati dalla varietà (cioè con più di una varietà) calcola
+// anche gli INTERPALI in cui la varietà è presente. Interpalo = tratto di filare compreso fra
+// due pali consecutivi; il k-esimo interpalo copre da (k-1)*distPali a k*distPali metri dall'inizio
+// del filare. Posizioni di viti e pali sono quelle di calcolaGeomVigneto (vite i → i*distViti,
+// pali ogni distPali, con lo stesso default di 5 m): quindi coincidono con ciò che si vede in mappa.
+// Con "invertViti" la numerazione parte dall'estremità dove sta la vite n.1, come i numeri vite.
 function raccogliDatiVarieta(){
   const tot = {};
-  vigneti.forEach(v=>{
+  vigneti.forEach((v,vi)=>{
     const meta = v.meta||{};
     const filari = v.filari||[];
     const vars = v.vars||[];
+    const distPali = meta.distPali || 5;
+    const invertViti = !!meta.invertViti;
+    const vigKey = uidVigneto(v,vi);
     const getVar = id=>vars.find(x=>x.id===id)||null;
 
     filari.forEach((f,fi)=>{
       const numero = meta.invertFilari ? filari.length-fi : fi+1;
-      const idsPresenti = new Set();
-      (f.piante||[]).forEach(p=>{ if(p.varietaId!=null) idsPresenti.add(p.varietaId); });
-      if(!idsPresenti.size && f.varietaId!=null) idsPresenti.add(f.varietaId); // fallback filare mono
-      idsPresenti.forEach(id=>{
+      const piante = f.piante||[];
+      const distViti = f.distViti || 1;
+      const nInt = Math.max(1, Math.ceil((f.lunghezza||0)/distPali - 1e-9));
+      const perVar = new Map(); // id varietà -> {viti, int:Set di interpali (1..nInt)}
+      piante.forEach((p,pi)=>{
+        if(p.varietaId==null) return;
+        let e = perVar.get(p.varietaId);
+        if(!e){ e = {viti:0, int:new Set(), min:pi, max:pi}; perVar.set(p.varietaId, e); }
+        e.viti++; e.max = pi;
+        let k = Math.floor(pi*distViti/distPali + 1e-9) + 1;
+        if(k>nInt) k = nInt;
+        if(invertViti) k = nInt-k+1;
+        e.int.add(k);
+      });
+      if(!perVar.size && f.varietaId!=null) perVar.set(f.varietaId, {viti:0, int:new Set(), min:0, max:-1}); // fallback filare mono
+      const intero = perVar.size===1; // una sola varietà nel filare → la occupa tutto
+
+      perVar.forEach((e,id)=>{
         const vr = getVar(id);
         if(!vr) return;
         if(!tot[vr.nome]) tot[vr.nome] = {color:vr.color, n:0, byVigneto:{}};
-        if(!tot[vr.nome].byVigneto[v.nome]) tot[vr.nome].byVigneto[v.nome] = new Set();
-        tot[vr.nome].byVigneto[v.nome].add(numero);
+        if(!tot[vr.nome].color) tot[vr.nome].color = vr.color;
+        const bv = tot[vr.nome].byVigneto;
+        if(!bv[vigKey]) bv[vigKey] = {nome:v.nome||'(vigneto senza nome)', righe:{}};
+        const ex = bv[vigKey].righe[numero];
+        if(ex){ // due varietà distinte con lo stesso nome nello stesso filare: unisco
+          ex.viti += e.viti; e.int.forEach(k=>ex.int.add(k)); ex.intero = ex.intero && intero; ex.mix = true;
+        } else {
+          // mix = le viti di questa varietà sono alternate ad altre (non formano un blocco continuo)
+          bv[vigKey].righe[numero] = {numero, intero, viti:e.viti, nInt, int:e.int, mix: e.viti>0 && (e.max-e.min+1)!==e.viti};
+        }
       });
     });
     // conteggio totale viti per varietà: usa il totale già calcolato dal planner (più affidabile)
@@ -1097,28 +1170,97 @@ function raccogliDatiVarieta(){
   return tot;
 }
 
+// [1,2,3,5,7,8] -> [[1,3],[5,5],[7,8]]
+function comprimiNumeri(nums){
+  const a = Array.from(nums).sort((x,y)=>x-y), out = [];
+  a.forEach(n=>{
+    const l = out[out.length-1];
+    if(l && n===l[1]+1) l[1] = n; else out.push([n,n]);
+  });
+  return out;
+}
+const fmtIt = n=>Number(n).toLocaleString('it-IT');
+const escHtml = t=>String(t).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Blocco HTML di un vigneto dentro la card di una varietà: filari interi (chip compressi in
+// intervalli, mai su una sola riga rigida) + filari parziali con barra degli interpali.
+function htmlVarietaVigneto(d, bv, mostraNomeVig){
+  const righe = Object.values(bv.righe).sort((a,b)=>a.numero-b.numero);
+  const interi = righe.filter(r=>r.intero);
+  const parziali = righe.filter(r=>!r.intero);
+
+  let html = `<div class="vc-vig">`;
+  if(mostraNomeVig) html += `<div class="vc-vigname">▣ ${escHtml(bv.nome)}</div>`;
+
+  if(interi.length){
+    const chips = comprimiNumeri(interi.map(r=>r.numero)).map(([x,y])=>
+      `<span class="ftag"><b>${x===y?'F'+x:'F'+x+'–F'+y}</b></span>`).join('');
+    html += `<div class="vc-grp"><div class="vc-lbl">Filari interi <span class="n">${interi.length}</span></div><div class="var-filari">${chips}</div></div>`;
+  }
+
+  if(parziali.length){
+    // Filari parziali con la STESSA disposizione (stessi interpali, stesso numero totale) vengono
+    // raggruppati in un'unica voce (es. F61–F64): niente lunghe liste ripetitive.
+    const gruppi = new Map();
+    parziali.forEach(r=>{
+      const ints = Array.from(r.int).sort((x,y)=>x-y);
+      const key = r.nInt+'|'+ints.join(',')+'|'+(r.mix?1:0);
+      if(!gruppi.has(key)) gruppi.set(key, {ints, nInt:r.nInt, mix:r.mix, righe:[]});
+      gruppi.get(key).righe.push(r);
+    });
+    const righeHtml = Array.from(gruppi.values()).map(g=>{
+      const runs = comprimiNumeri(g.ints);
+      const segs = runs.map(([x,y])=>
+        `<i class="seg" style="left:${((x-1)/g.nInt*100).toFixed(3)}%;width:${((y-x+1)/g.nInt*100).toFixed(3)}%"></i>`).join('');
+      const tk = g.nInt<=60 ? '<i class="tk" style="background-size:'+(100/g.nInt).toFixed(4)+'% 100%"></i>' : '';
+      const testoRuns = runs.map(([x,y])=>x===y?String(x):x+'–'+y).join(', ');
+      const etichetta = g.ints.length===1 ? 'interpalo' : 'interpali';
+      const vitiTot = g.righe.reduce((s,r)=>s+r.viti,0);
+      const chipsF = comprimiNumeri(g.righe.map(r=>r.numero)).map(([x,y])=>
+        `<span class="ftag"><b>${x===y?'F'+x:'F'+x+'–F'+y}</b></span>`).join('');
+      const nF = g.righe.length;
+      const dettagli = [`su ${g.nInt} totali`, nF>1?`${nF} filari`:'', vitiTot?`${fmtIt(vitiTot)} viti`:'', g.mix?'alternata ad altre varietà':''].filter(Boolean).join(' · ');
+      return `<div class="pr">
+        <div class="var-filari">${chipsF}</div>
+        <div class="pr-bar${g.mix?' mix':''}" role="img" aria-label="${etichetta} ${testoRuns} su ${g.nInt}">${segs}${tk}</div>
+        <div class="pr-txt">${etichetta} <b>${testoRuns}</b><span class="sub">${dettagli}</span></div>
+      </div>`;
+    }).join('');
+    // molti gruppi: elenco richiudibile (chiuso di default) per non allungare troppo la scheda
+    const aperto = gruppi.size<=4 ? ' open' : '';
+    html += `<div class="vc-grp"><details class="vc-part"${aperto}>
+      <summary>Filari parziali <span class="n">${parziali.length}</span><span class="tap">tocca per aprire</span></summary>
+      <div class="pr-list">${righeHtml}</div></details></div>`;
+  }
+  return html+'</div>';
+}
+
 function renderVarieta(){
   const body = document.getElementById('sheetBody');
   const tot = raccogliDatiVarieta();
   const entries = Object.entries(tot).sort((a,b)=>b[1].n-a[1].n);
   if(!entries.length){ body.innerHTML = '<p style="color:var(--text2);font-size:13px">Nessuna varietà disponibile: importa prima un file.</p>'; return; }
   const multiVigneto = vigneti.length>1;
-  body.innerHTML = `<input class="search-box" id="searchVar" placeholder="Cerca varietà…"><div id="varList"></div>`;
+  body.innerHTML = `<div class="sticky-search"><input class="search-box" id="searchVar" placeholder="Cerca varietà…"></div>`+
+    `<div class="var-hint">Interpalo = tratto di filare fra due pali consecutivi, contato dall’inizio del filare (vite n.1). `+
+    `“Filari interi” = solo questa varietà; “parziali” = filari condivisi con altre varietà.</div><div id="varList"></div>`;
   function draw(){
-    const q = document.getElementById('searchVar').value.toLowerCase();
+    const q = document.getElementById('searchVar').value.toLowerCase().trim();
     const list = document.getElementById('varList');
     list.innerHTML = entries.filter(([n])=>n.toLowerCase().includes(q)).map(([n,d])=>{
-      const gruppi = Object.entries(d.byVigneto).map(([vname,set])=>{
-        const numeri = Array.from(set).sort((a,b)=>a-b).map(x=>'F'+x).join(', ');
-        const prefisso = multiVigneto ? `${vname}: ` : '';
-        return `<span class="ftag">${prefisso}<b>${numeri}</b></span>`;
-      }).join('');
-      return `<div class="var-item">
-        <span class="vc" style="background:${d.color||'#888'}"></span>
-        <div class="vi-main">
-          <div class="vn-row"><span class="vn">${n}</span><span class="vcount">${d.n} viti</span></div>
-          <div class="var-filari">${gruppi||'<span class="ftag">nessun filare individuato</span>'}</div>
-        </div>
+      const vigs = Object.values(d.byVigneto);
+      let nInteri=0, nParz=0;
+      vigs.forEach(bv=>Object.values(bv.righe).forEach(r=>{ if(r.intero) nInteri++; else nParz++; }));
+      const totFil = nInteri+nParz;
+      const sommario = totFil
+        ? `${totFil} filar${totFil===1?'e':'i'}${nInteri?` · ${nInteri} inter${nInteri===1?'o':'i'}`:''}${nParz?` · ${nParz} parzial${nParz===1?'e':'i'}`:''}`
+        : '';
+      const corpo = vigs.map(bv=>htmlVarietaVigneto(d, bv, multiVigneto)).join('')
+        || '<div class="vc-vig"><div class="var-filari"><span class="ftag">nessun filare individuato</span></div></div>';
+      return `<div class="var-card" style="--vcol:${d.color||'#888'}">
+        <div class="vc-head"><span class="vc-name">${escHtml(n)}</span><span class="vc-count">${fmtIt(d.n)} <small>viti</small></span></div>
+        ${sommario?`<div class="vc-sum">${sommario}</div>`:''}
+        <div class="vc-vigs">${corpo}</div>
       </div>`;
     }).join('') || '<p style="color:var(--text2);font-size:13px">Nessun risultato.</p>';
   }
@@ -1140,6 +1282,7 @@ function renderInfo(){
         <div><b>${totHa.toFixed(2)}</b> ettari totali (somma)</div>
       </div>
     </div>
+    <div class="info-block" style="font-size:12.5px;color:var(--text2)">Versione app: <b style="color:var(--accent)">v. ${APP_VERSION}</b></div>
     <button class="btn secondary" id="btnReimport" style="width:100%;justify-content:center;margin-bottom:8px">⇪ Importa nuovo file JSON</button>
     <button class="btn secondary" id="btnClear" style="width:100%;justify-content:center;background:#3a1c1c;border-color:#5a2626">Cancella dati salvati sul telefono</button>
     <p style="color:var(--text2);font-size:11.5px;margin-top:14px;line-height:1.5">
